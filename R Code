@@ -1,0 +1,3515 @@
+# Loading packages ----------------------------------------------------------------
+extrafont::loadfonts(device = "win")
+
+require(readstata13)
+require(readxl)
+require(tidyverse)
+require(tidylog)
+require(lubridate)
+require(DataExplorer)
+require(mice)
+
+require(nlme)
+
+require(caret)
+require(doParallel)
+require(doSNOW)
+
+require(cowplot)
+
+require(iml)
+require(future)
+require(future.callr)
+
+
+
+# Helping functions -------------------------------------------------------
+day.to.yearORmonth <- function(x, unit = c("year", "month")){
+  
+  if(unit == "year") {
+    
+    x1 <- as.numeric(x)/365.25
+  }
+  
+  if(unit == "month") {
+    
+    x1 <- (as.numeric(x)/365.25)*12
+  }
+  
+  return(x1)
+}
+
+
+a.holstein <- matrix(c(36.5146, 27.3524, -0.1203),
+                     nrow= 3, ncol = 1)
+
+g.inv.holstein <- matrix(c(125.43,	-26.503,	0.8333,
+                           -26.503,	24.5961, -0.8049,
+                           0.8333,	-0.8049,	0.03847),
+                         nrow= 3, ncol = 3, byrow = TRUE) %>% solve()
+
+cue.2012.HOLSTEIN <- function(age, weight, age.pred, a.holstein, g.inv.holstein) {
+  
+  y <- matrix(weight, ncol = 1)
+  
+  x <- matrix(c(rep(1, length(age)),
+                age, age^2),
+              nrow = length(age), ncol = 3, byrow = FALSE)
+  
+  x.t <- t(x)
+  
+  POM <- 1.2455
+  Res <- 0.2636
+  
+  mm <- (x %*% a.holstein)^POM
+  
+  r <- solve(diag(c(mm*Res)))
+  
+  if(length(mm) == 1) {
+    r <- mm
+  }
+  
+  out1 <- solve(((x.t %*% r) %*% x) + g.inv.holstein)
+  
+  out2 <- ((x.t %*% r) %*% y) + (g.inv.holstein %*% a.holstein)
+  
+  res <- out1 %*% out2
+  
+  wgt <- res[1,] + res[2,]*age.pred + res[3,] * age.pred^2
+  
+  return(wgt)
+}
+
+
+getSeason <- function(DATES) {
+  WS <- as.Date("2012-12-15", format = "%Y-%m-%d") # Winter Solstice
+  SE <- as.Date("2012-3-15",  format = "%Y-%m-%d") # Spring Equinox
+  SS <- as.Date("2012-6-15",  format = "%Y-%m-%d") # Summer Solstice
+  FE <- as.Date("2012-9-15",  format = "%Y-%m-%d") # Fall Equinox
+  
+  # Convert dates from any year to 2012 dates
+  d <- as.Date(strftime(DATES, format="2012-%m-%d"))
+  
+  factor(ifelse (d >= WS | d < SE, "Winter",
+                 ifelse (d >= SE & d < SS, "Spring",
+                         ifelse (d >= SS & d < FE, "Summer", "Fall"))),
+         levels = c("Winter", "Spring", "Summer", "Fall"))
+}
+
+
+
+# Relative prediction error 
+RPE <- function(obs, pred) {
+  rmse <- caret::RMSE(pred = pred,
+                      obs = obs)
+  rpe <- (rmse/mean(obs)) *100
+  
+  return(rpe)
+}
+
+
+
+
+
+ModelEvaluation <- function(models,
+                            target.variable,
+                            train.data,
+                            validation.data,
+                            model.name,
+                            imputation) {
+  
+  # Training data set
+  
+  r2.train <- R2(pred = predict(models[[imputation]], 
+                                train.data %>% 
+                                  filter(.imp == imputation)),
+                 obs = train.data %>% 
+                   filter(.imp == imputation) %>% 
+                   pull(target.variable),
+                 formula = "traditional")
+  
+  mae.train <- MAE(pred = predict(models[[imputation]], 
+                                  train.data %>% 
+                                    filter(.imp == imputation)),
+                   obs = train.data %>% 
+                     filter(.imp == imputation) %>% 
+                     pull(target.variable))
+  
+  rmse.train <- RMSE(pred = predict(models[[imputation]], 
+                                    train.data %>% 
+                                      filter(.imp == imputation)),
+                     obs = train.data %>% 
+                       filter(.imp == imputation) %>% 
+                       pull(target.variable))
+  
+  rpe.train <- RPE(pred = predict(models[[imputation]], 
+                                  train.data %>% 
+                                    filter(.imp == imputation)),
+                   obs = train.data %>% 
+                     filter(.imp == imputation) %>% 
+                     pull(target.variable))
+  
+  
+  
+  # Validation data set
+  
+  r2.val <- R2(pred = predict(models[[imputation]], 
+                              validation.data %>% 
+                                filter(.imp == imputation)),
+               obs = validation.data %>% 
+                 filter(.imp == imputation) %>% 
+                 pull(target.variable),
+               formula = "traditional")
+  
+  mae.val <- MAE(pred = predict(models[[imputation]], 
+                                validation.data %>% 
+                                  filter(.imp == imputation)),
+                 obs = validation.data %>% 
+                   filter(.imp == imputation) %>% 
+                   pull(target.variable))
+  
+  rmse.val <- RMSE(pred = predict(models[[imputation]], 
+                                  validation.data %>% 
+                                    filter(.imp == imputation)),
+                   obs = validation.data %>% 
+                     filter(.imp == imputation) %>% 
+                     pull(target.variable))
+  
+  rpe.val <- RPE(pred = predict(models[[imputation]], 
+                                validation.data %>% 
+                                  filter(.imp == imputation)),
+                 obs = validation.data %>% 
+                   filter(.imp == imputation) %>% 
+                   pull(target.variable))
+  
+  res <- tibble(imputation = imputation,
+                model = model.name,
+                data.set = c(rep("training", 4), rep("validation", 4)),
+                metric = rep(c("r2", "MAE", "RMSE", "RPE"), 2),
+                value = c(r2.train, mae.train, rmse.train, rpe.train, 
+                          r2.val, mae.val, rmse.val, rpe.val))
+  
+  return(res)
+  
+}
+
+
+# Data --------------------------------------------------------------------
+d.upei <- read.dta13("PEI/2021_02_10_NB_data_Jan_2020.dta")
+d.v2k <- read_excel("2021_08_28_NB-Cumul-Revenue-V2.xlsx") %>% 
+  rename_all(tolower)
+
+lhr_codes <- read_excel("Left_Herd_Reasons.xlsx")
+
+
+d.v2k <- d.v2k %>% 
+  left_join(lhr_codes %>% 
+              select(lhr_cd, left_herd_reason) %>% 
+              mutate_if(is.character, as.factor),
+            by = "lhr_cd")
+
+# During merging, only in "x" file is due to NAs 
+
+
+
+
+# Exploration and cleaning -------------------------------------------
+## Production and peformance ####
+# Starting with Lactanet data since it has the outcome variables and less animals
+
+summary(d.v2k)
+str(d.v2k)
+
+# Converting data to the right format
+d.v2k1 <- d.v2k %>% 
+  mutate_if(is.character, as.factor) %>% # some were numeric, manually doing that
+  mutate_at(c("anm_id", "hrd_id", "mismatch_birth", "lact_no"), as.factor) %>% 
+  mutate_at(c("enter_herd_date", "left_herd_date", "nb_birthdate", "birth_date",
+              "lact_start_date", "lact_end_date"), as.Date, format = "%Y-%m-%d")
+
+
+summary(d.v2k1)
+str(d.v2k1)
+
+
+# Total N of animals
+n.tot <- d.v2k1 %>% 
+  distinct(anm_id, .keep_all = TRUE) %>% 
+  count()
+n.tot
+
+# 439 unique anm_id
+
+# How many animals are already culled?
+n.culled <- d.v2k1 %>% 
+  distinct(anm_id, .keep_all = TRUE) %>% 
+  filter(!is.na(left_herd_date)) %>% 
+  count()
+
+n.culled
+
+# 374 unique id
+
+round(n.culled/n.tot * 100, 0)
+# 374 (85%) were already culled (have a culling date) and 65 were not culled yet
+# In addition, there is no data on performance and production for animals that were
+# not yet culled. Removing this animals
+
+d.v2k2 <- d.v2k1 %>% 
+  filter(!is.na(left_herd_date))
+
+length(unique(d.v2k2$anm_id))
+
+
+# Exploratory graphs
+DataExplorer::plot_missing(d.v2k2)
+
+DataExplorer::plot_bar(d.v2k2)
+
+DataExplorer::plot_histogram(d.v2k2)
+
+DataExplorer::plot_correlation(d.v2k2, type = "continuous", 
+                               cor_args = c(use = "pairwise.complete.obs"))
+
+DataExplorer::plot_correlation(d.v2k2, type = "discrete", 
+                               cor_args = c(use = "pairwise.complete.obs"))
+
+
+
+
+# Looking at possible problems between left herd date and lactation_start_date
+d.v2k2 %>% 
+  mutate(diff_lact_start = as.numeric(left_herd_date - lact_start_date)) %>% 
+  pull(diff_lact_start) %>% 
+  summary()
+
+error_lact_left_dates <- d.v2k2 %>% 
+  mutate(diff_lact_start = as.numeric(left_herd_date - lact_start_date)) %>% 
+  filter(diff_lact_start < 0) %>% 
+  distinct(anm_id) %>% 
+  pull()
+
+
+# There were some problems in 10 animals (negative values), but there are no production data on
+# all observations in which left_herd_date is lower than lactation_start_date.
+# It will not be a problem here :)
+
+
+# Calculating age at first calving (afc), length of life (LL), and length of productive life (LPL)
+# Also creating variable indicating if animals where culled before 1st calving
+
+d.v2k3 <- d.v2k2 %>% 
+  left_join(d.v2k2 %>% 
+              
+              # There is no duplicated anm_ids
+              filter(lact_no == 1) %>% 
+              select(anm_id, lact_start_date) %>% 
+              rename(date_1st_cv = lact_start_date),
+            by = "anm_id") %>% 
+  
+  # Replacing Lactanet birth dates data for UPEI birth dates.
+  # Using the UPEI birth date and only Lactanet birth dates for NAs
+  # base::ifelse was converting Date to numeric. if_else does not  do that
+  mutate(birth_date = if_else(is.na(nb_birthdate),
+                              birth_date, nb_birthdate)) %>% 
+  
+  mutate(afc = day.to.yearORmonth(x = date_1st_cv - birth_date,
+                                  unit = "month"),
+         lpl = day.to.yearORmonth(x = left_herd_date - date_1st_cv,
+                                  unit = "year"),
+         ll = day.to.yearORmonth(x = left_herd_date - birth_date, 
+                                 unit = "year"),
+         
+         culled_bf_1s_cv = factor(ifelse(is.na(lact_no), "yes", "no"), 
+                                  levels = c("yes", "no")))
+
+summary(d.v2k3)
+
+d.v2k3 %>% 
+  filter(is.na(lact_no)) %>% 
+  distinct(anm_id) %>% 
+  count()
+
+DataExplorer::plot_missing(d.v2k3)
+
+
+# Calculating cumulative milk value and cumulative energy corrected milk (cum_ecm)
+missing_milk_value <- d.v2k3 %>% 
+  mutate(cumul_milk_value = na_if(cumul_milk_value, 0)) %>% 
+  filter(culled_bf_1s_cv == "no",
+         is.na(cumul_milk_value)) %>% 
+  distinct(anm_id) %>% 
+  pull()
+
+
+d.v2k3 %>% 
+  mutate(cumul_milk_value = na_if(cumul_milk_value, 0)) %>% 
+  filter(anm_id %in% missing_milk_value) %>% 
+  summary()
+
+
+d.v2k3 %>% 
+  mutate(cumul_milk_value = na_if(cumul_milk_value, 0)) %>% 
+  filter(anm_id %in% missing_milk_value, !is.na(tot_lact_date_yld_milk)) %>% 
+  view()
+
+
+# Calculating missing Milk Values
+
+anm_9985357_lact_4_milk_value <- d.v2k3 %>% 
+  select(anm_id, lact_no, tot_lact_date_yld_milk, tot_lact_date_yld_fat, 
+         tot_lact_date_yld_prot) %>% 
+  filter(anm_id == 9985357) %>% 
+  arrange(lact_no) %>% 
+  mutate(lag_milk = lag(tot_lact_date_yld_milk),
+         lag_fat = lag(tot_lact_date_yld_fat),
+         lag_protein = lag(tot_lact_date_yld_prot)) %>% 
+  filter(lact_no == 4) %>% 
+  mutate(milk = tot_lact_date_yld_milk - lag_milk,
+         fat = tot_lact_date_yld_fat - lag_fat,
+         protein = tot_lact_date_yld_prot - lag_protein,
+         cumul_milk_value = (milk * 1.53 * 0.0578) +  
+           (fat * 10.7974) +  (protein * 7.2336)) %>% 
+  pull(cumul_milk_value)
+
+
+anm_10095203_lact_5_milk_value <- d.v2k3 %>% 
+  select(anm_id, lact_no, tot_lact_date_yld_milk, tot_lact_date_yld_fat, 
+         tot_lact_date_yld_prot) %>% 
+  filter(anm_id == 10095203) %>% 
+  arrange(lact_no) %>% 
+  mutate(lag_milk = lag(tot_lact_date_yld_milk),
+         lag_fat = lag(tot_lact_date_yld_fat),
+         lag_protein = lag(tot_lact_date_yld_prot)) %>% 
+  filter(lact_no == 5) %>% 
+  mutate(milk = tot_lact_date_yld_milk - lag_milk,
+         fat = tot_lact_date_yld_fat - lag_fat,
+         protein = tot_lact_date_yld_prot - lag_protein,
+         cumul_milk_value = (milk * 1.0006 * 0.0578) +  
+           (fat * 10.6316) +  (protein * 8.5458)) %>% 
+  pull(cumul_milk_value)
+
+
+# Calculating cumulative lifetime milk value
+cum_milk_value <- d.v2k3 %>% 
+  mutate(cumul_milk_value = na_if(cumul_milk_value, 0)) %>%
+  filter(culled_bf_1s_cv == "no") %>% 
+  mutate(cumul_milk_value = ifelse(anm_id ==  9985357 & lact_end_date == as.Date("2020-05-01"),
+                                   anm_9985357_lact_4_milk_value, 
+                                   ifelse(anm_id ==  10095203 & lact_end_date == as.Date("2021-07-30"),
+                                          anm_10095203_lact_5_milk_value,
+                                          cumul_milk_value))) %>% 
+  filter(!is.na(cumul_milk_value)) %>% 
+  group_by(anm_id) %>% 
+  summarise_at("cumul_milk_value",
+               sum) %>% 
+  rename(life_cum_milk_value = cumul_milk_value)
+
+
+summary(cum_milk_value)
+
+
+# Getting cumulative lifetime milk, fat, and protein production
+
+cum_milk <- d.v2k3 %>% 
+  filter(culled_bf_1s_cv == "no") %>% 
+  filter(!is.na(tot_lact_date_yld_milk)) %>%
+  arrange(anm_id, desc(lact_no)) %>% 
+  group_by(anm_id) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  mutate(life_cum_ecm = 12.55*tot_lact_date_yld_fat + 
+           7.39*tot_lact_date_yld_prot + 
+           0.2595*tot_lact_date_yld_milk) %>% 
+  select(anm_id, "tot_lact_date_yld_milk", "tot_lact_date_yld_fat", 
+         "tot_lact_date_yld_prot", life_cum_ecm)
+
+missing_ecm <- cum_milk %>% 
+  filter(is.na(life_cum_ecm)) %>% 
+  pull(anm_id)
+
+
+summary(cum_milk)
+
+
+# Merging prod and milk value
+cum_milk_prod_final <- cum_milk %>% 
+  left_join(cum_milk_value,
+            by = "anm_id")
+
+
+DataExplorer::plot_missing(cum_milk_prod_final)
+summary(cum_milk_prod_final)
+hist(cum_milk_prod_final$life_cum_milk_value)
+
+
+# Merging lifetime cumulative ecm and milk value with the longevity data
+d.v2k4 <- d.v2k3 %>% 
+  select(-c("tot_lact_date_yld_milk", "tot_lact_date_yld_fat",
+            "tot_lact_date_yld_prot")) %>%  # These variables would be problematic 
+  # because they have the same name in the other file
+  
+  # Keeping only one observation per animal. In this case, data from the last recorded lactation
+  group_by(anm_id) %>% 
+  arrange(desc(lact_no), .by_group = TRUE) %>% 
+  distinct(anm_id, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  
+  # Merging data files
+  left_join(cum_milk_prod_final,
+            by = "anm_id") %>% 
+  
+  # Keeping only variables of interest
+  select(hrd_id, anm_id, calf_ear_tag, reg_id, birth_date, left_herd_date, culled_bf_1s_cv,
+         left_herd_reason, afc, ll, lpl, life_cum_ecm, life_cum_milk_value)
+
+
+summary(d.v2k4)
+length(unique(d.v2k4$anm_id))
+
+
+# Why there are animals with missing production but non missing LPL?
+looking_into <- d.v2k4 %>% 
+  filter(!is.na(lpl), is.na(life_cum_ecm)) %>% 
+  pull(anm_id)
+
+d.v2k3 %>% 
+  filter(anm_id %in% looking_into) %>% 
+  View()
+
+# The reason is because they were culled very early in the first lactation.
+# (Likely before the first test). So they do not have production data
+
+
+# Exploratory graphs
+DataExplorer::plot_bar(d.v2k4)
+
+DataExplorer::plot_missing(d.v2k4, 
+                           title = "All data - Including animals culled before 1st calving")
+DataExplorer::plot_missing(d.v2k4 %>% 
+                             filter(culled_bf_1s_cv == "no"),
+                           title = "EXCLUDED Animals culled before 1st calving")
+
+
+
+DataExplorer::plot_histogram(d.v2k4)
+
+DataExplorer::plot_correlation(d.v2k4, type = "continuous", 
+                               cor_args = c(use = "pairwise.complete.obs"))
+
+d.v2k4 %>% 
+  select_if(is.numeric) %>% 
+  cor(use = "complete.obs")
+
+
+
+# LPL, ECM, and milk value are good together as outcome variables.
+# LL, however, is a bit more problematic, since some animals were culled before
+# producing milk. So it is not possible to pair this animals with the others.
+
+
+# Creating two separate data sets. One with length of life and another with LPL, ECM, and Milk Value
+
+# Renaming variables on UPEI data set to match names on Lactanet file
+d.upei1 <- d.upei %>% 
+  left_join(lacid, by = "FarmID") %>%
+  rename(hrd_id = LactanetID,
+         calf_ear_tag = CalfID,
+         reg_id = HO_N) %>% 
+  mutate(hrd_id = as.factor(hrd_id),
+         calf_ear_tag = as.factor(calf_ear_tag),
+         reg_id = as.factor(reg_id)) %>% 
+  
+  # There are some empty cells, converting those to NA
+  mutate(reg_id = na_if(reg_id, ""))
+
+
+# UPEI Data ---------------------------------------------------------------
+
+# Merging Lactanet and UPEI files
+# Most animals have official Holstein registry IDS. However, I few do not.
+# For those who have HO ids, using that and hrd_id, for the remaining, using 
+# ear_tag and hrd_id
+
+
+# Starting with length of life. Once this is clean, LPL file is simply a subset
+
+
+wd.ll1 <- d.v2k4 %>% 
+  
+  # Creating merging ID
+  mutate(merge_id = ifelse(is.na(reg_id), 
+                           paste(hrd_id, calf_ear_tag, sep = "_"),
+                           paste(hrd_id, reg_id, sep = "_"))) %>% 
+  left_join(d.upei1 %>% 
+              mutate(merge_id = ifelse(is.na(reg_id), 
+                                       paste(hrd_id, calf_ear_tag, sep = "_"),
+                                       paste(hrd_id, reg_id, sep = "_"))) %>% 
+              select(-c(hrd_id, reg_id, calf_ear_tag,
+                        # Also removing birth date variables (repeated) because it was already fixed on
+                        # Lactanet file and AJ variable becasue it was for Ibrahim project
+                        BirthDate, birth_dt, AJ)), 
+            by = "merge_id")
+
+
+# There are some duplicated observations. Identifying these animals!
+
+dup_merge_id <- wd.ll1 %>% 
+  group_by(merge_id) %>% 
+  count() %>% 
+  filter(n > 1) %>% 
+  pull(merge_id)
+
+dup_merge_id
+
+# d.upei1 %>%
+#   mutate(merge_id = ifelse(is.na(reg_id),
+#                            paste(hrd_id, calf_ear_tag, sep = "_"),
+#                            paste(hrd_id, reg_id, sep = "_"))) %>%
+#   filter(merge_id %in% dup_merge_id) %>%
+#   View()
+
+# Most of the data on these animals are the same in the duplicated observations,
+# but not in all of them. Since it is impossible to tell which one is correct, I will 
+# remove all of them.
+
+
+wd.ll2 <- wd.ll1 %>% 
+  filter(!(merge_id %in% dup_merge_id))
+
+# Exploratory graphs
+
+# Exploratory graphs
+DataExplorer::plot_bar(wd.ll2)
+
+DataExplorer::plot_missing(wd.ll2)
+
+DataExplorer::plot_histogram(wd.ll2)
+
+
+# Variables are not properly formatted fixing that. Also removing repeated 
+# variables
+
+wd.ll3 <- wd.ll2 %>%
+  mutate_at(c("birth_tm"), format, "%H:%M") %>% 
+  
+  # Variable WeaningDate is NOT CORRECT!!!!!!!! Getting rid of it
+  select(-WeaningDate) %>% 
+  mutate_at(c("bld_smp_dt"), 
+            as.Date, format = "%m/%d/%Y") %>% 
+  
+  # There is a bunch of empty cells and cells with a dot and with a dash that are not NAs. 
+  # Fixing that
+  mutate_all(~na_if(., "")) %>% 
+  mutate_at(c("nd_ft", "nd_fv"), na_if, ".") %>% 
+  mutate_at(c("nd_ft", "nd_fv"), as.numeric) %>% 
+  
+  mutate_at(c("AC"), na_if, "-") %>% 
+  mutate_at(c("AC"), as.numeric) %>% 
+  
+  
+  select(-c(merge_id, FarmID, HO_n, LabID_Serum, LabID_Colostrum, H, I, FarmName))
+
+summary(wd.ll3)
+
+wd.ll3 %>% distinct(anm_id) %>% summarise(n = n())
+
+
+# Transforming factor variables into factors 
+
+fac <- c("nav_inf", "scours",
+         "pneumonia")
+
+
+wd.ll4 <- wd.ll3 %>% 
+  mutate_at(fac, as.factor) %>% 
+  droplevels() 
+
+
+
+summary(wd.ll4)
+names(wd.ll4)
+
+## Weight variables ####
+ggplot(wd.ll4, aes(y = birth_wt, x = seq_along(birth_wt))) +
+  geom_point() +
+  ggtitle("Birth weight")
+
+# No indication of outliers on birth weight (i.e., values within biological levels)
+
+ggplot(wd.ll4, aes(y = wt2, x = seq_along(wt2))) +
+  geom_point()
+
+# There are some high values for second weights, which supposedly happened
+# close to the weaning date. Plotting second weight vs the animal age
+
+ggplot(wd.ll4, aes(y = wt2, x = wt2_dt - birth_date)) +
+  geom_point()
+
+# wd.ll4 %>% 
+#   mutate(wrong_date = wt2_dt - birth_date) %>% 
+#   select(wt2_dt, birth_date, wrong_date) %>% 
+#   View()
+
+# There is a mistake in one animal. Removing her from the plot
+ggplot(wd.ll4 %>% 
+         mutate(age_2nd_weight = wt2_dt - birth_date) %>% 
+         filter(age_2nd_weight > 0), 
+       aes(y = wt2, x = age_2nd_weight)) +
+  geom_point()
+
+# No indication of outliers. All values are withing biological limits.
+
+# Checking the difference between the weaning date and date of the 2nd weight
+
+wd.ll4 %>% 
+  mutate(diff_weight_date = as.numeric(wt2_dt - wean_dt)) %>% 
+  pull(diff_weight_date) %>% 
+  summary()
+
+wd.ll4 %>% 
+  mutate(diff_weight_date = as.numeric(wt2_dt - wean_dt)) %>% 
+  pull(diff_weight_date) %>% 
+  hist()
+
+
+ggplot(wd.ll4 %>% 
+         mutate(diff_weight_date = as.numeric(wt2_dt - wean_dt)) %>% 
+         filter(diff_weight_date < 365, diff_weight_date > -90) %>%
+         select(diff_weight_date),
+       aes(diff_weight_date)) +
+  geom_histogram(bins = 20, 
+                 color = "white",
+                 fill = "#4DAF4A") +
+  labs(x = "Weaning date - 2nd weight measurement (days)", 
+       y = "Count") +
+  scale_y_continuous(expand = expansion(mult = 0, add = c(0.9, 0.9))) +
+  scale_x_continuous(expand = expansion(mult = 0, add = c(0.9, 0.9)))  +
+  theme_classic(base_family = "Times New Roman") +
+  theme(axis.text = element_text(size = 10, color = "black"),
+        axis.line = element_line(color = "black"),
+        axis.ticks = element_line(color = "black"),
+        axis.title.x = element_text(size = 12,
+                                    margin = margin(t = 5, # top
+                                                    r = 0, # right 
+                                                    b = 0, # bottom
+                                                    l = 0)),
+        axis.title.y = element_text(size = 12,
+                                    margin = margin(t = 0, # top
+                                                    r = 10, # right 
+                                                    b = 0, # bottom
+                                                    l = 0)))
+
+
+# How many animals were weighted at weaning?
+wd.ll4 %>% 
+  mutate(diff_weight_date = as.numeric(wt2_dt - wean_dt)) %>% 
+  filter(diff_weight_date == 0) %>% 
+  summarise(n = n())
+
+
+round(wd.ll4 %>% 
+        mutate(diff_weight_date = as.numeric(wt2_dt - wean_dt)) %>% 
+        filter(diff_weight_date == 0) %>% 
+        summarise(n = n()) 
+      / 
+        wd.ll4 %>%
+        summarise(n = n()) * 100,
+      1)
+
+# It was the case for very few animals (17.2%), but not for all
+
+
+
+
+wd.ll4 %>% 
+  summarise(sum(is.na(birth_wt)))
+
+wd.ll4 %>% 
+  summarise(sum(is.na(birth_date)))
+
+
+wd.ll4 %>% 
+  summarise(sum(is.na(wt2)))
+
+wd.ll4 %>% 
+  summarise(sum(is.na(wt2_dt)))
+
+
+
+wd.weaning_weight <- wd.ll4 %>%
+  
+  # Putting data in a long format
+  
+  filter(!is.na(birth_wt)) %>% 
+  select(anm_id, birth_date, birth_wt) %>% 
+  mutate(ocasion = "birth",
+         age = 0) %>% 
+  rename(date = birth_date,
+         weight = birth_wt) %>% 
+  rbind(wd.ll4 %>%
+          filter(!is.na(wt2)) %>% 
+          mutate(ocasion = "2nd weight",
+                 age = day.to.yearORmonth(x = wt2_dt - birth_date,
+                                          unit = "month")) %>% 
+          select(anm_id, wt2_dt, wt2, ocasion, age) %>% 
+          
+          rename(date = wt2_dt,
+                 weight = wt2)) %>% 
+  arrange(anm_id, date) %>% 
+  
+  # Getting weaning age for prediction
+  left_join(wd.ll4 %>% 
+              mutate(correct_weaning_wght = ifelse(wean_dt == wt2_dt,
+                                                   "yes", "no"),
+                     age_weaning = day.to.yearORmonth(x = wean_dt - birth_date,
+                                                      unit = "month")) %>% 
+              select(anm_id, correct_weaning_wght, wean_dt, age_weaning),
+            by = "anm_id") 
+
+
+
+# Using the model to predict the weight of animals that were not weighted at weaning
+
+wd.weaning_weight_pred <- wd.weaning_weight %>%
+  filter(!is.na(age_weaning), 
+         correct_weaning_wght == "no") %>% 
+  droplevels() %>% 
+  group_by(anm_id) %>%
+  arrange(age, .by_group = TRUE) %>%
+  mutate(weaning_weight = cue.2012.HOLSTEIN(age = age, 
+                                            weight = weight,
+                                            a.holstein = a.holstein,
+                                            g.inv.holstein = g.inv.holstein,
+                                            age.pred = age_weaning)) %>% 
+  ungroup() %>% 
+  arrange(anm_id, desc(date)) %>% 
+  select(anm_id, weaning_weight) %>% 
+  distinct(anm_id, .keep_all = TRUE)
+
+
+
+# Combining the final number with the raw data and removing repeated variables
+# Also, calculating average daily gain during rearing (weaning_adg) and weaning age
+
+wd.final_weaning_wght <- wd.weaning_weight %>% 
+  filter(ocasion == "2nd weight", 
+         correct_weaning_wght == "yes") %>% 
+  select(anm_id, weight) %>% 
+  rename(weaning_weight = weight) %>% 
+  rbind(wd.weaning_weight_pred)
+
+summary(wd.final_weaning_wght)
+
+# There is a negative weaning weight because of a error in the weaning date
+# Removing that observation before merging
+
+
+wd.ll5 <- wd.ll4 %>% 
+  left_join(wd.final_weaning_wght %>% 
+              filter(weaning_weight > 0), 
+            by = "anm_id") %>% 
+  select(-c(BirthWeightkg, WeaningWeightkg, WeightGain, DaystoWeaning,
+            AverageDailyGain)) %>% 
+  mutate(weaning_adg = (weaning_weight - birth_wt)/ as.numeric(wean_dt - birth_date),
+         weaning_age = ifelse(day.to.yearORmonth(x = wean_dt - birth_date,
+                                                 unit = "month") < 0, NA,
+                              day.to.yearORmonth(x = wean_dt - birth_date,
+                                                 unit = "month")))
+
+
+
+ggplot(wd.ll5, aes(weaning_adg)) +
+  geom_histogram() +
+  ggtitle("Average daily gain during rearing (kg)")
+
+
+ggplot(wd.ll5, aes(weaning_age)) +
+  geom_histogram() +
+  ggtitle("Age at weaning (month)")
+
+
+ggplot(wd.ll5, aes(weaning_weight)) +
+  geom_histogram() +
+  ggtitle("Weight at weaning (kg)")
+
+
+mean(wd.ll5$weaning_age, na.rm = T)
+mean(wd.ll5$weaning_weight, na.rm = T)
+
+
+
+
+# Variable names are not very intuitive on UPEI file. Renaming them all
+
+
+wd.ll9 <- wd.ll5 %>% 
+  mutate(birth_season = factor(getSeason(birth_date)),
+         birth_year = factor(year(birth_date))) %>%
+  
+  # Removing variables that are not of interest
+  select(-c(fst_ftime, fst_fvolume, fst_fmethod, fst_ftype, fst_fpreserv, 
+            snd_ftime, snd_fvolume, snd_fmethod, snd_ftype, snd_fpreserv,
+            colostrom_total, colost_IgG, colost_brix, bacteria_count, 
+            coliform_count, serum_brix, serum_total_prot))
+   
+
+
+# Why are there animals with NON missing LPL and missing production?
+# The reason is because they were culled very early in the first lactation.
+# (I suspect that it was done likely before the first test day).
+# Therefore, they do not have production data and could be safely removed from
+# LPL data file before analysis. To get consistent imputation results for LL and LPL data
+# file, I will fist replace the missing values as zeros. 
+
+
+wd.ll11 <- wd.ll9 %>% 
+  mutate(lpl = ifelse(is.na(life_cum_ecm), 0, lpl),
+         life_cum_milk_value = ifelse(is.na(life_cum_ecm), 0, life_cum_milk_value),
+         life_cum_ecm = ifelse(is.na(life_cum_ecm), 0, life_cum_ecm))
+
+
+# Cleaning complete!
+
+# Avaliando a dispersão das parcelas perdidas
+
+n.NA <- wd.ll11 %>%
+  group_by(hrd_id) %>%
+  summarise_all(~sum(is.na(.))) %>%
+  transmute(hrd_id, sumNA = rowSums(.[-1]))
+
+n.NON_NA <- wd.ll11 %>%
+  group_by(hrd_id) %>%
+  summarise_all(~sum(!is.na(.))) %>%
+  transmute(hrd_id, sumNON_NA = rowSums(.[-1]))
+
+n.NA %>%
+  left_join(n.NON_NA, by = "hrd_id") %>%
+  mutate(percNA = round((sumNA/sumNON_NA)*100, 0)) %>%
+  arrange(desc(percNA)) %>% 
+  summarise(min = min(percNA),
+            max = max(percNA),
+            mean = mean(percNA),
+            sd = sd(percNA))
+
+
+
+DataExplorer::plot_bar(wd.ll11)
+
+DataExplorer::plot_missing(wd.ll11)
+
+DataExplorer::plot_histogram(wd.ll11)
+
+DataExplorer::plot_correlation(wd.ll11,
+                               type = "continuous",
+                               cor_args = list(use = "pairwise.complete.obs"))
+
+DataExplorer::plot_correlation(wd.ll11,
+                               type = "discrete",
+                               cor_args = list(use = "pairwise.complete.obs"))
+
+# Descriptive stats for paper
+
+# Cohort 1: Length of life
+wd.ll11 %>% 
+  count()
+
+
+# Numeric variables
+wd.ll11 %>% 
+  select_if(is.numeric) %>% 
+  summarise_all(~sum(is.na(.))) %>% 
+  data.frame()
+
+
+
+wd.ll11 %>% 
+  summarise_if(is.numeric, mean, na.rm = T) %>% 
+  data.frame() %>% 
+  round(2)
+
+wd.ll11 %>% 
+  summarise_if(is.numeric, sd, na.rm = T) %>% 
+  data.frame() %>% 
+  round(2)
+
+
+
+wd.ll11 %>% 
+  summarise_if(is.numeric, min, na.rm = T) %>% 
+  data.frame() %>% 
+  round(3)
+
+wd.ll11 %>% 
+  summarise_if(is.numeric, max, na.rm = T) %>% 
+  data.frame() %>% 
+  round(1)
+
+
+# Qualitative variables
+wd.ll11 %>% 
+  select(-anm_id) %>% 
+  select_if(is.factor) %>% 
+  summarytools::freq()
+
+
+
+# Cohort 2: Length of productive life
+
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  count()
+
+
+# Numeric variables
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  select_if(is.numeric) %>% 
+  summarise_all(~sum(is.na(.))) %>% 
+  data.frame()
+
+
+
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  summarise_if(is.numeric, mean, na.rm = T) %>% 
+  data.frame() %>% 
+  round(1)
+
+
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  summarise_if(is.numeric, sd, na.rm = T) %>% 
+  data.frame() %>% 
+  round(1)
+
+
+
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  summarise_if(is.numeric, min, na.rm = T) %>% 
+  data.frame() %>% 
+  round(3)
+
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  summarise_if(is.numeric, max, na.rm = T) %>% 
+  data.frame() %>% 
+  round(3)
+
+
+# Qualitative variables
+wd.ll11 %>% 
+  select(-anm_id) %>% 
+  select_if(is.factor) %>% 
+  summarytools::freq()
+
+
+wd.ll11 %>% 
+  filter(lpl != 0) %>% 
+  select(-anm_id) %>% 
+  select_if(is.factor) %>% 
+  summarytools::freq()
+
+
+
+# Variable selection ------------------------------------------------------
+# Using genetic algorithm to select the best subset of variables to predict length
+# of life, length of productive life, ECM, and Milk value
+
+wd.ll11 %>%
+  select(birth_weight, weaning_weight, 
+         weaning_age, weaning_adg) %>% 
+  cor(use = "pairwise.complete.obs")
+
+
+
+number <- 5
+repeats <- 10
+
+set.seed(1801)
+seeds <- sample.int(1000000, c(number*repeats + 1))
+seeds
+
+ctrlGA <- gafsControl(functions = caretGA,
+                      method = "LGOCV",
+                      p = 0.75,
+                      number = number,
+                      repeats = repeats, 
+                      metric = c(internal = "RMSE", 
+                                 external = "RMSE"),
+                      maximize = c(internal = FALSE,
+                                   external = FALSE),
+                      verbose = TRUE,
+                      seeds = seeds,
+                      genParallel = TRUE,
+                      allowParallel = TRUE)
+
+
+# Setting parallel clusters
+
+cl <- makePSOCKcluster(parallel::detectCores())
+registerDoParallel(cl, cores = parallel::detectCores())
+
+getDoParWorkers()
+
+
+
+# Running Genetic Algorithm for variable selection on complete data set
+
+start <- Sys.time()
+start
+
+# Length of life
+set.seed(1801)
+res.GA_ll_var_select <- gafs(x = wd.ll11 %>%
+                               select(birth_weight, weaning_weight, 
+                                      weaning_age, weaning_adg), 
+                             
+                             y = wd.ll11 %>% 
+                               pull(ll),
+                             
+                             iters = 50,
+                             popSize = 150,
+                             gafsControl = ctrlGA,
+                             
+                             # Passing options to "train" function
+                             method = "rpart2",
+                             na.action = na.pass)
+
+
+end1 <- Sys.time()
+end1-start
+
+
+
+# Length of productive life
+set.seed(1801)
+res.GA_lpl_var_select <- gafs(x = wd.ll11 %>%
+                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+                                droplevels() %>% 
+                                select(birth_weight, weaning_weight, 
+                                       weaning_age, weaning_adg), 
+                              
+                              y = wd.ll11 %>%
+                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+                                droplevels() %>%
+                                pull(lpl),
+                              
+                              iters = 50,
+                              popSize = 150,
+                              gafsControl = ctrlGA,
+                              
+                              # Passing options to "train" function
+                              method = "rpart2",
+                              na.action = na.pass)
+
+end2 <- Sys.time()
+end2-start
+
+
+
+# Energy-corrected milk
+set.seed(1801)
+res.GA_ecm_var_select <- gafs(x = wd.ll11 %>%
+                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+                                droplevels() %>% 
+                                select(birth_weight, weaning_weight, 
+                                       weaning_age, weaning_adg), 
+                              
+                              y = wd.ll11 %>%
+                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+                                droplevels() %>%
+                                pull(life_cum_ecm),
+                              
+                              iters = 50,
+                              popSize = 150,
+                              gafsControl = ctrlGA,
+                              
+                              # Passing options to "train" function
+                              method = "rpart2",
+                              na.action = na.pass)
+
+end3 <- Sys.time()
+end3-start
+
+
+
+# Milk value
+set.seed(1801)
+res.GA_mv_var_select <- gafs(x = wd.ll11 %>%
+                               filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+                               droplevels() %>% 
+                               select(birth_weight, weaning_weight, 
+                                      weaning_age, weaning_adg), 
+                             
+                             y = wd.ll11 %>%
+                               filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+                               droplevels() %>%
+                               pull(life_cum_milk_value),
+                             
+                             iters = 50,
+                             popSize = 150,
+                             gafsControl = ctrlGA,
+                             
+                             # Passing options to "train" function
+                             method = "rpart2",
+                             na.action = na.pass)
+
+end4 <- Sys.time()
+end4-start
+
+stopCluster(cl)
+
+
+# Genetic algorithm error plots during optimization
+
+legend <- get_legend(res.GA_ll_var_select %>% 
+                       plot() + 
+                       theme_bw(base_family = "Times New Roman") +
+                       theme(legend.position = "bottom",
+                             legend.text = element_text(size = 10),
+                             legend.title = element_text(size = 10),
+                             legend.key.size = unit(0.4, 'cm'),
+                             legend.title.align = 0.5))
+
+plot_grid(res.GA_ll_var_select%>% 
+            plot() + 
+            theme_bw(base_family = "Times New Roman") + 
+            theme(legend.position = "none") + 
+            theme(axis.text = element_text(size = 10, color = "black"),
+                  axis.ticks.x = element_line(color = "black"),
+                  axis.ticks.y = element_line(NA),
+                  axis.line = element_line("black"),
+                  axis.title.y = element_text(size = 10, 
+                                              margin = margin(t = 0, # top
+                                                              r = 10, # right
+                                                              b = 0, # bottom
+                                                              l = 0)),
+                  axis.title.x = element_text(size = 10,
+                                              margin = margin(t = 10, # top
+                                                              r = 0, # right
+                                                              b = 0, # bottom
+                                                              l = 0))),
+          
+          res.GA_lpl_var_select%>% 
+            plot() + 
+            theme_bw(base_family = "Times New Roman") + 
+            theme(legend.position = "none") + 
+            theme(axis.text = element_text(size = 10, color = "black"),
+                  axis.ticks.x = element_line(color = "black"),
+                  axis.ticks.y = element_line(NA),
+                  axis.line = element_line("black"),
+                  axis.title.y = element_text(size = 10, 
+                                              margin = margin(t = 0, # top
+                                                              r = 10, # right
+                                                              b = 0, # bottom
+                                                              l = 0)),
+                  axis.title.x = element_text(size = 10,
+                                              margin = margin(t = 10, # top
+                                                              r = 0, # right
+                                                              b = 0, # bottom
+                                                              l = 0))),
+          
+          res.GA_ecm_var_select%>% 
+            plot() + 
+            theme_bw(base_family = "Times New Roman") + 
+            theme(legend.position = "none") + 
+            theme(axis.text = element_text(size = 10, color = "black"),
+                  axis.ticks.x = element_line(color = "black"),
+                  axis.ticks.y = element_line(NA),
+                  axis.line = element_line("black"),
+                  axis.title.y = element_text(size = 10,
+                                              margin = margin(t = 0, # top
+                                                              r = 10, # right
+                                                              b = 0, # bottom
+                                                              l = 0)),
+                  axis.title.x = element_text(size = 10,
+                                              margin = margin(t = 10, # top
+                                                              r = 0, # right
+                                                              b = 0, # bottom
+                                                              l = 0))),
+          
+          res.GA_mv_var_select%>% 
+            plot() + 
+            theme_bw(base_family = "Times New Roman") + 
+            theme(legend.position = "none") + 
+            theme(axis.text = element_text(size = 10, color = "black"),
+                  axis.ticks.x = element_line(color = "black"),
+                  axis.ticks.y = element_line(NA),
+                  axis.line = element_line("black"),
+                  axis.title.y = element_text(size = 10,
+                                              margin = margin(t = 0, # top
+                                                              r = 10, # right
+                                                              b = 0, # bottom
+                                                              l = 0)),
+                  axis.title.x = element_text(size = 10,
+                                              margin = margin(t = 10, # top
+                                                              r = 0, # right
+                                                              b = 0, # bottom
+                                                              l = 0))),
+          
+          
+          NULL, # Creating space for legend
+          
+          ncol = 2, 
+          labels = c("A", "B", "C", "D"),
+          label_fontfamily = "Times New Roman",
+          rel_heights = c(0.99, 0.99, 0.15, 
+                          0.99, 0.99, 0.15)) + 
+  
+  draw_grob(legend, 0.54, 0, 0, 0.08)
+
+
+
+
+# Multiple imputation -----------------------------------------------------
+# Multiple imputation and selecting the subset of weight variables selected
+# by the genetoc algorithm. 
+
+
+# Upon further discussion with Elsa, we have decided to drop colostrum management
+# practices variables and keep only outcome variables. However, I will use all these
+# variables in the imputation and drop them after
+
+
+
+wd.imputed <- mice(data = wd.ll10 %>% 
+                     select(-anm_id), 
+                   method = "rf",
+                   seed = 1801,
+                   m = 10,
+                   printFlag = TRUE)
+
+# inspect quality of imputations
+plot(wd.imputed)
+densityplot(wd.imputed)
+
+wd.imputed %>% mice::complete("long") %>% summary()
+wd.ll11 %>% summary()
+
+
+
+# Length of life
+wd.ll.imputed.stats <- wd.imputed %>% 
+  mice::complete("long") %>% 
+  select(-c(
+    # Removing variables not selected by the genetic algorithm
+    weaning_weight, weaning_age, weaning_adg)) %>% 
+  
+  select(
+    # Selecting variables of interest
+    .imp, hrd_id, birth_year, birth_season, ll, birth_weight, navel_inf, 
+    scours, pneumonia, antib_treat, serum_IgG_infrared)
+
+
+
+# Length of productive life
+wd.lpl.imputed.stats <- wd.imputed %>% 
+  mice::complete("long")  %>%
+  filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+  droplevels() %>% 
+  
+  select(-c(
+    # Removing variables not selected by the genetic algorithm
+    weaning_weight, weaning_age, weaning_adg)) %>% 
+  
+  select(
+    # Selecting variables of interest
+    .imp, hrd_id, birth_year, birth_season, lpl, birth_weight, navel_inf, 
+    scours, pneumonia, antib_treat, serum_IgG_infrared)
+
+
+# Energy-corrected milk
+wd.ecm.imputed.stats <- wd.imputed %>% 
+  mice::complete("long") %>%
+  filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+  droplevels() %>% 
+  
+  select(-c(
+    # Removing variables not selected by the genetic algorithm
+    weaning_weight, weaning_age, weaning_adg)) %>% 
+  
+  select(
+    # Selecting variables of interest
+    .imp, hrd_id, birth_year, birth_season, life_cum_ecm, birth_weight, navel_inf, 
+    scours, pneumonia, antib_treat, serum_IgG_infrared)
+
+
+
+# Milk value
+wd.mv.imputed.stats <- wd.imputed %>% 
+  mice::complete("long") %>%
+  filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
+  droplevels() %>% 
+  
+  select(-c(
+    # Removing variables not selected by the genetic algorithm
+    weaning_weight, weaning_age, weaning_adg)) %>% 
+  
+  select(
+    # Selecting variables of interest
+    .imp, hrd_id, birth_year, birth_season, life_cum_milk_value, birth_weight, navel_inf, 
+    scours, pneumonia, antib_treat, serum_IgG_infrared)
+
+
+
+# Length of Life ------------------------------------------------
+
+# Exploratory graphs
+wd.ll.imputed.stats %>% 
+  DataExplorer::plot_bar()
+
+wd.ll.imputed.stats %>% 
+  DataExplorer::plot_histogram()
+
+wd.ll.imputed.stats %>% 
+  DataExplorer::plot_correlation(type = "continuous")
+
+wd.ll.imputed.stats %>% 
+  DataExplorer::plot_correlation(type = "discrete")
+
+
+
+## Splitting data ####
+wd.ll.imput.train.split <- data.frame()
+wd.ll.imput.val.split <- data.frame()
+
+for (i in 1:10) {
+  
+  data <- wd.ll.imputed.stats %>%
+    filter(.imp == i)
+  
+  splitIndex <- splitTools::partition(data$ll,
+                                      p = c(train = 0.80, valid = 0.20),
+                                      seed = 1801)
+  
+  wd.ll.imput.train.split <- rbind(wd.ll.imput.train.split,
+                                   data[splitIndex$train,])
+  
+  wd.ll.imput.val.split <- rbind(wd.ll.imput.val.split,
+                                 data[splitIndex$valid,])
+  
+}
+
+
+# Inspecting it
+summary(wd.ll.imput.train.split %>% 
+          filter(.imp == 1))
+
+
+summary(wd.ll.imput.val.split %>% 
+          filter(.imp == 1))
+
+
+
+## Sanity check ####
+# Training a classic mixed effect model for each of the imputed files
+
+
+r2.mixeffect <- c()
+rmse.mixeffect <- c()
+
+for(i in 1:10) {
+  
+  ll.mixeffect <- lme(ll ~ birth_weight + navel_inf + scours + pneumonia + 
+                        antib_treat + serum_IgG_infrared,
+                      random = ~ 1|hrd_id/birth_year/birth_season,
+                      data = wd.ll.imput.train.split %>% 
+                        filter(.imp == i) %>% 
+                        select(-.imp))
+  
+  anova(ll.mixeffect, type = "marginal") %>%  
+    print()
+  
+  
+  r2.mixeffect[i] <- caret::R2(pred = predict(ll.mixeffect,
+                                              wd.ll.imput.val.split %>% 
+                                                filter(.imp == i)),
+                               obs = wd.ll.imput.val.split %>% 
+                                 filter(.imp == i) %>% 
+                                 pull(ll),
+                               formula = "traditional")
+  
+  rmse.mixeffect[i] <- caret::RMSE(pred = predict(ll.mixeffect,
+                                                  wd.ll.imput.val.split %>% 
+                                                    filter(.imp == i)),
+                                   obs = wd.ll.imput.val.split %>% 
+                                     filter(.imp == i) %>% 
+                                     pull(ll))
+  
+}
+
+
+mean(r2.mixeffect) %>% 
+  round(2)
+
+mean(rmse.mixeffect) %>% 
+  round(2)
+
+
+# None of the variables statistically differed to zero and the 
+# performance of the model was veeeeeeeery low
+
+
+
+## Training machine learning models ####
+
+# Generating seeds for the random processes
+number <- 5
+repeats <- 10
+
+
+set.seed(1801)
+seeds <- vector(mode = "list", length = (number*repeats+1))
+for(i in 1:(number*repeats)) seeds[[i]] <- sample.int(1000000, 27)
+
+# For the last model:
+seeds[[(number*repeats+1)]] <- sample.int(1000000, 1)
+
+
+set.seed(1801)
+fit_control <- trainControl(method = "adaptive_cv",
+                            search = "grid",
+                            number = number,
+                            repeats = repeats,
+                            adaptive = list(min = 5, alpha = 0.05, 
+                                            method = "gls", 
+                                            complete = TRUE),
+                            allowParallel = TRUE,
+                            verboseIter = FALSE,
+                            seeds = seeds)
+
+
+
+
+# Setting parallel clusters
+
+cl <- makePSOCKcluster(parallel::detectCores())
+registerDoParallel(cl, cores = parallel::detectCores())
+
+getDoParWorkers()
+
+
+
+### Classification and regression decision Tree ####
+
+ll.tree.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ll.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  tree_ll <- train(ll ~ ., 
+                   data = data, 
+                   method = "rpart2",
+                   trControl = fit_control)
+  
+  ll.tree.models[[i]] <- tree_ll
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+### Gradient boosting machine ####
+
+ll.gbm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ll.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  gbm_ll <- train(ll ~ ., 
+                  data = data, 
+                  method = "gbm",
+                  trControl = fit_control)
+  
+  ll.gbm.models[[i]] <- gbm_ll
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+### Random Forest ####
+
+ll.rf.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ll.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  rf_ll <- train(ll ~ ., 
+                 data = data, 
+                 method = "ranger",
+                 trControl = fit_control)
+  
+  ll.rf.models[[i]] <- rf_ll
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+### Support vector machine ####
+
+ll.svm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ll.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  svm_ll <- train(ll ~ ., 
+                  data = data, 
+                  method = "svmRadialSigma",
+                  trControl = fit_control)
+  
+  ll.svm.models[[i]] <- svm_ll
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+stopCluster(cl)
+
+
+
+##  Best model ####
+
+# Best model decided based on the lowest prediction error
+
+
+res.ll <- data.frame()
+
+
+for(i in 1:10) {
+  
+  res.ll <- rbind(res.ll, 
+                  ModelEvaluation(models = ll.tree.models,
+                                  target.variable = "ll",
+                                  train.data = wd.ll.imput.train.split,
+                                  validation.data = wd.ll.imput.val.split,
+                                  model.name = "ctree",
+                                  imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = ll.gbm.models,
+                          target.variable = "ll",
+                          train.data = wd.ll.imput.train.split,
+                          validation.data = wd.ll.imput.val.split,
+                          model.name = "gbm",
+                          imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = ll.rf.models,
+                          target.variable = "ll",
+                          train.data = wd.ll.imput.train.split,
+                          validation.data = wd.ll.imput.val.split,
+                          model.name = "rf",
+                          imputation = i)) %>% 
+    
+    rbind(ModelEvaluation(models = ll.svm.models,
+                          target.variable = "ll",
+                          train.data = wd.ll.imput.train.split,
+                          validation.data = wd.ll.imput.val.split,
+                          model.name = "svm",
+                          imputation = i))
+  
+  
+}
+
+
+res.ll %>% 
+  filter(data.set == "validation") %>%
+  group_by(model, data.set, metric) %>% 
+  summarise(Mean = mean(value),
+            SD = sd(value)) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  # filter(metric %in% c("r2", "RMSE")) %>%
+  arrange(desc(Mean))
+
+
+# Random Forest was the best model!
+
+
+
+## Model interpretation ------------------------------------------------------
+
+# Creating predictors
+
+predictors.ll <- list()
+
+for(i in 1:10) {
+  
+  plan("callr", workers = 14)
+  predictor <- Predictor$new(model = ll.rf.models[[i]], 
+                             data = wd.ll.imputed.stats %>% 
+                               filter(.imp == i) %>% 
+                               select(-.imp),
+                             y = "ll")
+  
+  predictors.ll[[i]] <- predictor
+  
+}
+
+
+
+
+### Variable importance ####
+
+
+var.imp.ll <- data.frame()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  imp <- FeatureImp$new(predictors.ll[[i]], loss = "rmse",
+                        compare = "ratio")
+  
+  var.imp.ll <- imp$results %>% 
+    mutate(imputation = i) %>% 
+    rbind(var.imp.ll)
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+### Accumulated local effect ####
+
+ale.ll.res <- list()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  
+  set.seed(1801)
+  ale.ll <- FeatureEffects$new(predictors.ll[[i]], method = "ale",
+                               grid.size = 50)
+  
+  ale.ll.res[[i]] <- ale.ll
+  
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+ale.ll.res.compiled <- data.frame()
+
+for(i in 1:10){
+  
+  vars <- names(ale.ll.res[[i]]$results)
+  
+  for(j in seq_along(vars)){
+    
+    ale.ll.res.compiled <- ale.ll.res[[i]]$results[j] %>%
+      unname %>% 
+      as.data.frame() %>% 
+      mutate(imp = i) %>% 
+      rbind(ale.ll.res.compiled)
+    
+  }
+}
+
+
+
+
+# Length of Productive Life -----------------------------------------------
+wd.lpl.imput.train.split <- data.frame()
+wd.lpl.imput.val.split <- data.frame()
+
+for (i in 1:10) {
+  
+  data <- wd.lpl.imputed.stats %>%
+    filter(.imp == i)
+  
+  splitIndex <- splitTools::partition(data$lpl,
+                                      p = c(train = 0.80, valid = 0.20),
+                                      seed = 18)
+  
+  wd.lpl.imput.train.split <- rbind(wd.lpl.imput.train.split,
+                                    data[splitIndex$train,])
+  
+  wd.lpl.imput.val.split <- rbind(wd.lpl.imput.val.split,
+                                  data[splitIndex$valid,])
+  
+}
+
+
+# Inspecting it
+summary(wd.lpl.imput.train.split %>% 
+          filter(.imp == 1))
+
+
+summary(wd.lpl.imput.val.split %>% 
+          filter(.imp == 1))
+
+
+
+## Sanity check ####
+# Training a classic mixed effect model for each of the imputed files
+
+
+r2.lpl.mixeffect <- c()
+rmse.lpl.mixeffect <- c()
+
+for(i in 1:10) {
+  
+  lpl.mixeffect <- lme(lpl ~ birth_weight  + navel_inf + scours + pneumonia + 
+                         antib_treat + serum_IgG_infrared,
+                       random = ~ 1|hrd_id/birth_season,
+                       data = wd.lpl.imput.train.split %>% 
+                         filter(.imp == i))
+  
+  anova(lpl.mixeffect, type = "marginal") %>%  
+    print()
+  
+  
+  r2.lpl.mixeffect[i] <- caret::R2(pred = predict(lpl.mixeffect,
+                                                  wd.lpl.imput.val.split %>% 
+                                                    filter(.imp == i)),
+                                   obs = wd.lpl.imput.val.split %>% 
+                                     filter(.imp == i) %>% 
+                                     pull(lpl),
+                                   formula = "traditional")
+  
+  rmse.lpl.mixeffect[i] <- caret::RMSE(pred = predict(lpl.mixeffect,
+                                                      wd.lpl.imput.val.split %>% 
+                                                        filter(.imp == i)),
+                                       obs = wd.lpl.imput.val.split %>% 
+                                         filter(.imp == i) %>% 
+                                         pull(lpl))
+  
+}
+
+
+mean(r2.lpl.mixeffect) %>% 
+  round(2)
+
+mean(rmse.lpl.mixeffect) %>% 
+  round(2)
+
+
+# Depending of the imputation round, Navel Infections differed than zero 
+# Performance of the model was also veeeeeeeery low
+
+
+
+## Training machine learning models ####
+
+# Generating seeds for the random processes
+number <- 5
+repeats <- 10
+
+
+set.seed(1801)
+seeds <- vector(mode = "list", length = (number*repeats+1))
+for(i in 1:(number*repeats)) seeds[[i]] <- sample.int(1000000, 27)
+
+# For the last model:
+seeds[[(number*repeats+1)]] <- sample.int(1000000, 1)
+
+
+set.seed(1801)
+fit_control <- trainControl(method = "adaptive_cv",
+                            search = "grid",
+                            number = number,
+                            repeats = repeats,
+                            adaptive = list(min = 5, alpha = 0.05, 
+                                            method = "gls", 
+                                            complete = TRUE),
+                            allowParallel = TRUE,
+                            verboseIter = FALSE,
+                            seeds = seeds)
+
+# Setting parallel clusters
+
+cl <- makePSOCKcluster(parallel::detectCores())
+registerDoParallel(cl, cores = parallel::detectCores())
+
+getDoParWorkers()
+
+
+
+### Classification and regression decision Tree ####
+
+lpl.tree.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.lpl.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  tree_lpl <- train(lpl ~ ., 
+                    data = data, 
+                    method = "rpart2",
+                    trControl = fit_control)
+  
+  lpl.tree.models[[i]] <- tree_lpl
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+### Gradient boosting machine ####
+
+lpl.gbm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.lpl.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  gbm_lpl <- train(lpl ~ ., 
+                   data = data, 
+                   method = "gbm",
+                   trControl = fit_control)
+  
+  lpl.gbm.models[[i]] <- gbm_lpl
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+### Random Forest ####
+
+lpl.rf.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.lpl.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  rf_lpl <- train(lpl ~ ., 
+                  data = data, 
+                  method = "ranger",
+                  trControl = fit_control)
+  
+  lpl.rf.models[[i]] <- rf_lpl
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+### Support vector machine ####
+
+lpl.svm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.lpl.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  svm_lpl <- train(lpl ~ ., 
+                   data = data, 
+                   method = "svmRadialSigma",
+                   trControl = fit_control)
+  
+  lpl.svm.models[[i]] <- svm_lpl
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+stopCluster(cl)
+
+
+
+##  Best model ####
+
+# Best model decided based on the lowest prediction error
+
+
+res.lpl <- data.frame()
+
+
+for(i in 1:10) {
+  
+  res.lpl <- rbind(res.lpl, 
+                   ModelEvaluation(models = lpl.tree.models,
+                                   target.variable = "lpl",
+                                   train.data = wd.lpl.imput.train.split,
+                                   validation.data = wd.lpl.imput.val.split,
+                                   model.name = "ctree",
+                                   imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = lpl.gbm.models,
+                          target.variable = "lpl",
+                          train.data = wd.lpl.imput.train.split,
+                          validation.data = wd.lpl.imput.val.split,
+                          model.name = "gbm",
+                          imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = lpl.rf.models,
+                          target.variable = "lpl",
+                          train.data = wd.lpl.imput.train.split,
+                          validation.data = wd.lpl.imput.val.split,
+                          model.name = "rf",
+                          imputation = i)) %>% 
+    
+    rbind(ModelEvaluation(models = lpl.svm.models,
+                          target.variable = "lpl",
+                          train.data = wd.lpl.imput.train.split,
+                          validation.data = wd.lpl.imput.val.split,
+                          model.name = "svm",
+                          imputation = i))
+  
+  
+}
+
+
+res.lpl %>% 
+  filter(data.set == "validation") %>%
+  group_by(model, data.set, metric) %>% 
+  summarise(Mean = mean(value),
+            SD = sd(value)) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  # filter(metric %in% c("r2", "RMSE")) %>%
+  arrange(desc(Mean))
+
+
+# Random Forest was the best model!
+
+
+## Model interpretation ------------------------------------------------------
+
+# Creating predictors
+
+predictors.lpl <- list()
+
+for(i in 1:10) {
+  
+  plan("callr", workers = 14)
+  predictor <- Predictor$new(model = lpl.rf.models[[i]], 
+                             data = wd.lpl.imputed.stats %>% 
+                               filter(.imp == i) %>% 
+                               select(-.imp),
+                             y = "lpl")
+  
+  predictors.lpl[[i]] <- predictor
+  
+}
+
+
+
+
+### Variable importance ####
+
+
+var.imp.lpl <- data.frame()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  imp.lpl <- FeatureImp$new(predictors.lpl[[i]], loss = "rmse",
+                            compare = "ratio")
+  
+  var.imp.lpl <- imp.lpl$results %>% 
+    mutate(imputation = i) %>% 
+    rbind(var.imp.lpl)
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+### Accumulated local effect ####
+
+ale.lpl.res <- list()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  
+  set.seed(1801)
+  ale.lpl <- FeatureEffects$new(predictors.lpl[[i]], method = "ale",
+                                grid.size = 50)
+  
+  ale.lpl.res[[i]] <- ale.lpl
+  
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+ale.lpl.res.compiled <- data.frame()
+
+for(i in 1:10){
+  
+  vars <- names(ale.lpl.res[[i]]$results)
+  
+  for(j in seq_along(vars)){
+    
+    ale.lpl.res.compiled <- ale.lpl.res[[i]]$results[j] %>%
+      unname %>% 
+      as.data.frame() %>% 
+      mutate(imp = i) %>% 
+      rbind(ale.lpl.res.compiled)
+    
+  }
+}
+
+
+
+
+# ECM -----------------------------------------------
+wd.ecm.imput.train.split <- data.frame()
+wd.ecm.imput.val.split <- data.frame()
+
+for (i in 1:10) {
+  
+  data <- wd.ecm.imputed.stats %>%
+    filter(.imp == i)
+  
+  splitIndex <- splitTools::partition(data$life_cum_ecm,
+                                      p = c(train = 0.80, valid = 0.20),
+                                      seed = 18)
+  
+  wd.ecm.imput.train.split <- rbind(wd.ecm.imput.train.split,
+                                    data[splitIndex$train,])
+  
+  wd.ecm.imput.val.split <- rbind(wd.ecm.imput.val.split,
+                                  data[splitIndex$valid,])
+  
+}
+
+
+# Inspecting it
+summary(wd.ecm.imput.train.split %>% 
+          filter(.imp == 1))
+
+
+summary(wd.ecm.imput.val.split %>% 
+          filter(.imp == 1))
+
+
+
+## Sanity check ####
+# Training a classic mixed effect model for each of the imputed files
+
+
+r2.ecm.mixeffect <- c()
+rmse.ecm.mixeffect <- c()
+
+for(i in 1:10) {
+  
+  ecm.mixeffect <- lme(life_cum_ecm ~ birth_weight  + navel_inf + scours + pneumonia + 
+                         antib_treat + serum_IgG_infrared,
+                       random = ~ 1|hrd_id/birth_season,
+                       data = wd.ecm.imput.train.split %>% 
+                         filter(.imp == i))
+  
+  anova(ecm.mixeffect, type = "marginal") %>%  
+    print()
+  
+  
+  r2.ecm.mixeffect[i] <- caret::R2(pred = predict(ecm.mixeffect,
+                                                  wd.ecm.imput.val.split %>% 
+                                                    filter(.imp == i)),
+                                   obs = wd.ecm.imput.val.split %>% 
+                                     filter(.imp == i) %>% 
+                                     pull(life_cum_ecm),
+                                   formula = "traditional")
+  
+  rmse.ecm.mixeffect[i] <- caret::RMSE(pred = predict(ecm.mixeffect,
+                                                      wd.ecm.imput.val.split %>% 
+                                                        filter(.imp == i)),
+                                       obs = wd.ecm.imput.val.split %>% 
+                                         filter(.imp == i) %>% 
+                                         pull(life_cum_ecm))
+  
+}
+
+
+mean(r2.ecm.mixeffect) %>% 
+  round(3)
+
+mean(rmse.ecm.mixeffect) %>% 
+  round(2)
+
+
+# Depending of the imputation round, Navel Infections differed than zero 
+# Performance of the model was also veeeeeeeery low
+
+
+
+## Training machine learning models ####
+
+# Generating seeds for the random processes
+number <- 5
+repeats <- 10
+
+
+set.seed(1801)
+seeds <- vector(mode = "list", length = (number*repeats+1))
+for(i in 1:(number*repeats)) seeds[[i]] <- sample.int(1000000, 27)
+
+# For the last model:
+seeds[[(number*repeats+1)]] <- sample.int(1000000, 1)
+
+
+set.seed(1801)
+fit_control <- trainControl(method = "adaptive_cv",
+                            search = "grid",
+                            number = number,
+                            repeats = repeats,
+                            adaptive = list(min = 5, alpha = 0.05, 
+                                            method = "gls", 
+                                            complete = TRUE),
+                            allowParallel = TRUE,
+                            verboseIter = FALSE,
+                            seeds = seeds)
+
+# Setting parallel clusters
+
+cl <- makePSOCKcluster(parallel::detectCores())
+registerDoParallel(cl, cores = parallel::detectCores())
+
+getDoParWorkers()
+
+
+
+### Classification and regression decision Tree ####
+
+ecm.tree.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ecm.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  tree_ecm <- train(life_cum_ecm ~ ., 
+                    data = data, 
+                    method = "rpart2",
+                    trControl = fit_control)
+  
+  ecm.tree.models[[i]] <- tree_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+### Gradient boosting machine ####
+
+ecm.gbm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ecm.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  gbm_ecm <- train(life_cum_ecm ~ ., 
+                   data = data, 
+                   method = "gbm",
+                   trControl = fit_control)
+  
+  ecm.gbm.models[[i]] <- gbm_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+### Random Forest ####
+
+ecm.rf.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ecm.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  rf_ecm <- train(life_cum_ecm ~ ., 
+                  data = data, 
+                  method = "ranger",
+                  trControl = fit_control)
+  
+  ecm.rf.models[[i]] <- rf_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+### Support vector machine ####
+
+ecm.svm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.ecm.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  svm_ecm <- train(life_cum_ecm ~ ., 
+                   data = data, 
+                   method = "svmRadialSigma",
+                   trControl = fit_control)
+  
+  ecm.svm.models[[i]] <- svm_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+stopCluster(cl)
+
+
+
+##  Best model ####
+
+# Best model decided based on the lowest prediction error
+
+
+res.ecm <- data.frame()
+
+
+for(i in 1:10) {
+  
+  res.ecm <- rbind(res.ecm, 
+                   ModelEvaluation(models = ecm.tree.models,
+                                   target.variable = "life_cum_ecm",
+                                   train.data = wd.ecm.imput.train.split,
+                                   validation.data = wd.ecm.imput.val.split,
+                                   model.name = "ctree",
+                                   imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = ecm.gbm.models,
+                          target.variable = "life_cum_ecm",
+                          train.data = wd.ecm.imput.train.split,
+                          validation.data = wd.ecm.imput.val.split,
+                          model.name = "gbm",
+                          imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = ecm.rf.models,
+                          target.variable = "life_cum_ecm",
+                          train.data = wd.ecm.imput.train.split,
+                          validation.data = wd.ecm.imput.val.split,
+                          model.name = "rf",
+                          imputation = i)) %>% 
+    
+    rbind(ModelEvaluation(models = ecm.svm.models,
+                          target.variable = "life_cum_ecm",
+                          train.data = wd.ecm.imput.train.split,
+                          validation.data = wd.ecm.imput.val.split,
+                          model.name = "svm",
+                          imputation = i))
+  
+  
+}
+
+
+res.ecm %>% 
+  filter(data.set == "validation") %>%
+  group_by(model, data.set, metric) %>% 
+  summarise(Mean = mean(value),
+            SD = sd(value)) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  # filter(metric %in% c("r2", "RMSE")) %>%
+  arrange(desc(Mean))
+
+
+# Random Forest was the best model!
+
+
+## Model interpretation ------------------------------------------------------
+
+# Creating predictors
+
+predictors.ecm <- list()
+
+for(i in 1:10) {
+  
+  plan("callr", workers = 14)
+  predictor <- Predictor$new(model = ecm.rf.models[[i]], 
+                             data = wd.ecm.imputed.stats %>% 
+                               filter(.imp == i) %>% 
+                               select(-.imp),
+                             y = "life_cum_ecm")
+  
+  predictors.ecm[[i]] <- predictor
+  
+}
+
+
+
+
+### Variable importance ####
+
+
+var.imp.ecm <- data.frame()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  imp.ecm <- FeatureImp$new(predictors.ecm[[i]], loss = "rmse",
+                            compare = "ratio")
+  
+  var.imp.ecm <- imp.ecm$results %>% 
+    mutate(imputation = i) %>% 
+    rbind(var.imp.ecm)
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+### Accumulated local effect ####
+
+ale.ecm.res <- list()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  
+  set.seed(1801)
+  ale.ecm <- FeatureEffects$new(predictors.ecm[[i]], method = "ale",
+                                grid.size = 50)
+  
+  ale.ecm.res[[i]] <- ale.ecm
+  
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+ale.ecm.res.compiled <- data.frame()
+
+for(i in 1:10){
+  
+  vars <- names(ale.ecm.res[[i]]$results)
+  
+  for(j in seq_along(vars)){
+    
+    ale.ecm.res.compiled <- ale.ecm.res[[i]]$results[j] %>%
+      unname %>% 
+      as.data.frame() %>% 
+      mutate(imp = i) %>% 
+      rbind(ale.ecm.res.compiled)
+    
+  }
+}
+
+
+# Milk value -----------------------------------------------
+wd.mv.imput.train.split <- data.frame()
+wd.mv.imput.val.split <- data.frame()
+
+for (i in 1:10) {
+  
+  data <- wd.mv.imputed.stats %>%
+    filter(.imp == i)
+  
+  splitIndex <- splitTools::partition(data$life_cum_milk_value,
+                                      p = c(train = 0.80, valid = 0.20),
+                                      seed = 1801)
+  
+  wd.mv.imput.train.split <- rbind(wd.mv.imput.train.split,
+                                   data[splitIndex$train,])
+  
+  wd.mv.imput.val.split <- rbind(wd.mv.imput.val.split,
+                                 data[splitIndex$valid,])
+  
+}
+
+
+# Inspecting it
+summary(wd.mv.imput.train.split %>% 
+          filter(.imp == 1))
+
+
+summary(wd.mv.imput.val.split %>% 
+          filter(.imp == 1))
+
+
+
+## Sanity check ####
+# Training a classic mixed effect model for each of the imputed files
+
+
+r2.mv.mixeffect <- c()
+rmse.mv.mixeffect <- c()
+
+for(i in 1:10) {
+  
+  mv.mixeffect <- lme(life_cum_milk_value ~ birth_weight  + navel_inf + scours + pneumonia + 
+                        antib_treat + serum_IgG_infrared,
+                      random = ~ 1|hrd_id/birth_season,
+                      data = wd.mv.imput.train.split %>% 
+                        filter(.imp == i))
+  
+  anova(mv.mixeffect, type = "marginal") %>%  
+    print()
+  
+  
+  r2.mv.mixeffect[i] <- caret::R2(pred = predict(mv.mixeffect,
+                                                 wd.mv.imput.val.split %>% 
+                                                   filter(.imp == i)),
+                                  obs = wd.mv.imput.val.split %>% 
+                                    filter(.imp == i) %>% 
+                                    pull(life_cum_milk_value),
+                                  formula = "traditional")
+  
+  rmse.mv.mixeffect[i] <- caret::RMSE(pred = predict(mv.mixeffect,
+                                                     wd.mv.imput.val.split %>% 
+                                                       filter(.imp == i)),
+                                      obs = wd.mv.imput.val.split %>% 
+                                        filter(.imp == i) %>% 
+                                        pull(life_cum_milk_value))
+  
+}
+
+
+mean(r2.mv.mixeffect) %>% 
+  round(2)
+
+mean(rmse.mv.mixeffect) %>% 
+  round(2)
+
+
+# No variable was statistically significant 
+# Performance of the model was also veeeeeeeery low
+
+
+
+## Training machine learning models ####
+
+# Generating seeds for the random processes
+number <- 5
+repeats <- 10
+
+
+set.seed(1801)
+seeds <- vector(mode = "list", length = (number*repeats+1))
+for(i in 1:(number*repeats)) seeds[[i]] <- sample.int(1000000, 27)
+
+# For the last model:
+seeds[[(number*repeats+1)]] <- sample.int(1000000, 1)
+
+
+set.seed(1801)
+fit_control <- trainControl(method = "adaptive_cv",
+                            search = "grid",
+                            number = number,
+                            repeats = repeats,
+                            adaptive = list(min = 5, alpha = 0.05, 
+                                            method = "gls", 
+                                            complete = TRUE),
+                            allowParallel = TRUE,
+                            verboseIter = FALSE,
+                            seeds = seeds)
+
+# Setting parallel clusters
+
+cl <- makePSOCKcluster(parallel::detectCores())
+registerDoParallel(cl, cores = parallel::detectCores())
+
+getDoParWorkers()
+
+
+
+### Classification and regression decision Tree ####
+
+mv.tree.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.mv.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  tree_ecm <- train(life_cum_milk_value ~ ., 
+                    data = data, 
+                    method = "rpart2",
+                    trControl = fit_control)
+  
+  mv.tree.models[[i]] <- tree_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+### Gradient boosting machine ####
+
+mv.gbm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.mv.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  gbm_ecm <- train(life_cum_milk_value ~ ., 
+                   data = data, 
+                   method = "gbm",
+                   trControl = fit_control)
+  
+  mv.gbm.models[[i]] <- gbm_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+### Random Forest ####
+
+mv.rf.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.mv.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  rf_ecm <- train(life_cum_milk_value ~ ., 
+                  data = data, 
+                  method = "ranger",
+                  trControl = fit_control)
+  
+  mv.rf.models[[i]] <- rf_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+### Support vector machine ####
+
+mv.svm.models <- list()
+
+
+for(i in 1:10) {
+  
+  
+  data <- wd.mv.imput.train.split %>% 
+    filter(.imp == i) %>% 
+    select(-.imp) %>% 
+    as.data.frame()
+  
+  
+  set.seed(1801)
+  svm_ecm <- train(life_cum_milk_value ~ ., 
+                   data = data, 
+                   method = "svmRadialSigma",
+                   trControl = fit_control)
+  
+  mv.svm.models[[i]] <- svm_ecm
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+stopCluster(cl)
+
+
+
+##  Best model ####
+
+# Best model decided based on the lowest prediction error
+
+
+res.mv <- data.frame()
+
+
+for(i in 1:10) {
+  
+  res.mv <- rbind(res.mv, 
+                  ModelEvaluation(models = mv.tree.models,
+                                  target.variable = "life_cum_milk_value",
+                                  train.data = wd.mv.imput.train.split,
+                                  validation.data = wd.mv.imput.val.split,
+                                  model.name = "ctree",
+                                  imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = mv.gbm.models,
+                          target.variable = "life_cum_milk_value",
+                          train.data = wd.mv.imput.train.split,
+                          validation.data = wd.mv.imput.val.split,
+                          model.name = "gbm",
+                          imputation = i)) %>%
+    
+    rbind(ModelEvaluation(models = mv.rf.models,
+                          target.variable = "life_cum_milk_value",
+                          train.data = wd.mv.imput.train.split,
+                          validation.data = wd.mv.imput.val.split,
+                          model.name = "rf",
+                          imputation = i)) %>% 
+    
+    rbind(ModelEvaluation(models = mv.svm.models,
+                          target.variable = "life_cum_milk_value",
+                          train.data = wd.mv.imput.train.split,
+                          validation.data = wd.mv.imput.val.split,
+                          model.name = "svm",
+                          imputation = i))
+  
+  
+}
+
+
+res.mv %>% 
+  filter(data.set == "validation") %>%
+  group_by(model, data.set, metric) %>% 
+  summarise(Mean = mean(value),
+            SD = sd(value)) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  # filter(metric %in% c("r2", "RMSE")) %>%
+  arrange(desc(Mean))
+
+
+# Random Forest was the best model!
+
+
+## Model interpretation ------------------------------------------------------
+
+# Creating predictors
+
+predictors.mv <- list()
+
+for(i in 1:10) {
+  
+  plan("callr", workers = 14)
+  predictor <- Predictor$new(model = mv.svm.models[[i]], 
+                             data = wd.mv.imputed.stats %>% 
+                               filter(.imp == i) %>% 
+                               select(-.imp),
+                             y = "life_cum_milk_value")
+  
+  predictors.mv[[i]] <- predictor
+  
+}
+
+
+
+
+### Variable importance ####
+
+
+var.imp.mv <- data.frame()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  imp.mv <- FeatureImp$new(predictors.mv[[i]], loss = "rmse",
+                           compare = "ratio")
+  
+  var.imp.mv <- imp.mv$results %>% 
+    mutate(imputation = i) %>% 
+    rbind(var.imp.mv)
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+
+### Accumulated local effect ####
+
+ale.mv.res <- list()
+
+
+for(i in 1:10) {
+  
+  
+  plan("callr", workers = 14)
+  
+  set.seed(1801)
+  ale.mv <- FeatureEffects$new(predictors.mv[[i]], method = "ale",
+                               grid.size = 50)
+  
+  ale.mv.res[[i]] <- ale.mv
+  
+  
+  print(
+    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+          sep = "")
+  )
+  
+  
+}
+
+
+
+ale.mv.res.compiled <- data.frame()
+
+for(i in 1:10){
+  
+  vars <- names(ale.mv.res[[i]]$results)
+  
+  for(j in seq_along(vars)){
+    
+    ale.mv.res.compiled <- ale.mv.res[[i]]$results[j] %>%
+      unname %>% 
+      as.data.frame() %>% 
+      mutate(imp = i) %>% 
+      rbind(ale.mv.res.compiled)
+    
+  }
+}
+
+
+
+
+# Final results -------------------------------------------------------------
+
+## Combined model performance ####
+performance.res <- res.ll %>% 
+  mutate(outcome = "ll") %>% 
+  rbind(res.lpl %>% 
+          mutate(outcome = "lpl")) %>% 
+  rbind(res.ecm %>% 
+          mutate(outcome = "ecm")) %>% 
+  rbind(res.mv %>% 
+          mutate(outcome = "mv")) %>% 
+  group_by(outcome, model, data.set, metric) %>% 
+  summarise(Mean = mean(value),
+            SD = sd(value)) %>% 
+  ungroup() %>% 
+  mutate(outcome = factor(outcome,
+                          levels = c("ll", "lpl", "ecm", "mv")),
+         metric = factor(metric,
+                         levels = c("r2", "RMSE", "MAE", "RPE")),
+         model = factor(model,
+                        levels = c("ctree", "gbm", "rf", "svm")))
+
+
+
+performance.res %>% 
+  filter(data.set == "training") %>% 
+  data.frame() %>% 
+  plyr::arrange(outcome, model, metric) %>% 
+  # mutate_if(is.numeric, round, 1)
+  mutate_at("Mean", round, 1) %>% 
+  mutate_at("SD", round, 3)
+
+
+performance.res %>% 
+  filter(data.set == "validation") %>% 
+  data.frame() %>% 
+  plyr::arrange(outcome, model, metric) %>% 
+  # mutate_if(is.numeric, round, 2)
+  mutate_at("Mean", round, 1) %>% 
+  mutate_at("SD", round, 3)
+
+
+
+## Variable importance ####
+
+
+varImp.plots <- plot_grid(
+  
+  ggplot(var.imp.ll %>%  
+           group_by(feature) %>% 
+           summarise(avg = mean(importance),
+                     sd = sd(importance)) %>% 
+           
+           mutate(feature = recode(feature, serum_IgG_infrared = "Serum IgG",
+                                   scours = "Scours",
+                                   pneumonia = "Pneumonia",
+                                   navel_inf = "Navel infection",
+                                   hrd_id = "Herd",
+                                   birth_year = "Birth year",
+                                   birth_weight = "Birth weight",
+                                   birth_season = "Birth season",
+                                   antib_treat = "Antibiotic treatment")) %>%
+           arrange(desc(avg)),
+         aes(y = reorder(feature, + avg),
+             x = avg)) +
+    geom_point() +
+    geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
+                  width = 0.2) +
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(1, 1.10, by = 0.02),
+                       limits = c(0.998, 1.1)) +
+    labs(x = "Variable importance") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks.x = element_line(color = "black"),
+          axis.ticks.y = element_line(NA),
+          axis.line = element_line("black"),
+          axis.title.y = element_blank(),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(var.imp.lpl %>%  
+           group_by(feature) %>% 
+           summarise(avg = mean(importance),
+                     sd = sd(importance)) %>% 
+           
+           mutate(feature = recode(feature, serum_IgG_infrared = "Serum IgG",
+                                   scours = "Scours",
+                                   pneumonia = "Pneumonia",
+                                   navel_inf = "Navel infection",
+                                   hrd_id = "Herd",
+                                   birth_year = "Birth year",
+                                   birht_weight = "Birth weight",
+                                   birth_season = "Birth season",
+                                   antib_treat = "Antibiotic treatment")) %>%
+           arrange(desc(avg)),
+         aes(y = reorder(feature, + avg),
+             x = avg)) +
+    geom_point() +
+    geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
+                  width = 0.2) +
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(1, 1.10, by = 0.02),
+                       limits = c(0.998, 1.1)) +
+    labs(x = "Variable importance") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks.x = element_line(color = "black"),
+          axis.ticks.y = element_line(NA),
+          axis.line = element_line("black"),
+          axis.title.y = element_blank(),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(var.imp.ecm %>%  
+           group_by(feature) %>% 
+           summarise(avg = mean(importance),
+                     sd = sd(importance)) %>% 
+           
+           mutate(feature = recode(feature, serum_IgG_infrared = "Serum IgG",
+                                   scours = "Scours",
+                                   pneumonia = "Pneumonia",
+                                   navel_inf = "Navel infection",
+                                   hrd_id = "Herd",
+                                   birth_year = "Birth year",
+                                   birht_weight = "Birth weight",
+                                   birth_season = "Birth season",
+                                   antib_treat = "Antibiotic treatment")) %>%
+           arrange(desc(avg)),
+         aes(y = reorder(feature, + avg),
+             x = avg)) +
+    geom_point() +
+    geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
+                  width = 0.2) +
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(1, 1.15, by = 0.03),
+                       limits = c(0.998, 1.15)) +
+    labs(x = "Variable importance") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks.x = element_line(color = "black"),
+          axis.ticks.y = element_line(NA),
+          axis.line = element_line("black"),
+          axis.title.y = element_blank(),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(var.imp.mv %>%  
+           group_by(feature) %>% 
+           summarise(avg = mean(importance),
+                     sd = sd(importance)) %>% 
+           
+           mutate(feature = recode(feature, serum_IgG_infrared = "Serum IgG",
+                                   scours = "Scours",
+                                   pneumonia = "Pneumonia",
+                                   navel_inf = "Navel infection",
+                                   hrd_id = "Herd",
+                                   birth_year = "Birth year",
+                                   birht_weight = "Birth weight",
+                                   birth_season = "Birth season",
+                                   antib_treat = "Antibiotic treatment")) %>%
+           arrange(desc(avg)),
+         aes(y = reorder(feature, + avg),
+             x = avg)) +
+    geom_point() +
+    geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
+                  width = 0.2) +
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(1, 1.12, by = 0.02),
+                       limits = c(0.998, 1.12)) +
+    labs(x = "Variable importance") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks.x = element_line(color = "black"),
+          axis.ticks.y = element_line(NA),
+          axis.line = element_line("black"),
+          axis.title.y = element_blank(),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  label_fontfamily = "Times New Roman",
+  nrow = 2,
+  labels = c("A", "B", "C", "D"),
+  label_size = 14,
+  scale = rep(0.97, 4))
+
+
+varImp.plots
+
+
+
+## Acumulated local effect ####
+
+var.factor <- c("antib_treat", "birth_season", "birth_year",
+                "hrd_id", "navel_inf", "pneumonia", "scours")
+
+var.num <- c("birth_weight", "serum_IgG_infrared")
+
+
+ale.res.compiled <- ale.ll.res.compiled %>% 
+  mutate(outcome = "ll") %>% 
+  rbind(ale.lpl.res.compiled %>% 
+          mutate(outcome = "lpl")) %>% 
+  rbind(ale.ecm.res.compiled %>% 
+          mutate(outcome = "ecm")) %>% 
+  rbind(ale.mv.res.compiled %>% 
+          mutate(outcome = "mv")) %>% 
+  ungroup() %>% 
+  mutate(outcome = factor(outcome,
+                          levels = c("ll", "lpl", "ecm", "mv")),
+         .feature = factor(.feature,
+                           levels = c("navel_inf", "scours", "pneumonia", 
+                                      "antib_treat", "birth_year",
+                                      "birth_season", "hrd_id", 
+                                      "birth_weight", "serum_IgG_infrared")))
+
+
+# Qualitative variables
+
+ale.res.compiled %>% 
+  filter(.feature %in% var.factor) %>% 
+  group_by(outcome, .feature, .borders) %>% 
+  summarise(AVG = mean(.value),
+            SD = sd(.value)) %>% 
+  data.frame() %>% 
+  plyr::arrange(outcome, .feature) %>% 
+  mutate_at("AVG", round, 1) %>%
+  mutate_at("SD", round, 2) %>%
+  rhandsontable::rhandsontable(useTypes = FALSE)
+  
+  
+  
+
+
+# Quantitative variables
+
+# birth weight
+
+plot_grid(
+  
+  ggplot(ale.res.compiled %>% 
+         filter(outcome == "ll", .feature == "birth_weight") %>% 
+         mutate(.borders = as.numeric(.borders)),
+       aes(x = .borders,
+           y = .value)) +
+  geom_line(aes(group = imp),
+            colour = "grey") +
+  geom_smooth(se = F)+
+  theme_classic(base_family = "Times New Roman") + 
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                     breaks = seq(27, 59, by = 4),
+                     limits = c(27, 59)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                     breaks = seq(-0.50, 0.15, by = 0.13),
+                     limits = c(-0.50, 0.15)) +
+  labs(x = "Birth weight (kg)",
+       y = "Accumulated local effect") +
+  theme_classic(base_family = "Times New Roman") +
+  theme(axis.text = element_text(size = 10, color = "black"),
+        axis.ticks = element_line(color = "black"),
+        axis.line = element_line("black"),
+        axis.title.y = element_text(size = 10,
+                                    margin = margin(t = 0, # top
+                                                    r = 10, # right
+                                                    b = 0, # bottom
+                                                    l = 0)),
+        axis.title.x = element_text(size = 10,
+                                    margin = margin(t = 10, # top
+                                                    r = 0, # right
+                                                    b = 0, # bottom
+                                                    l = 0))),
+
+
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "lpl", .feature == "birth_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+  theme_classic(base_family = "Times New Roman") + 
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                     breaks = seq(27, 59, by = 4),
+                     limits = c(27, 59)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                     breaks = seq(-0.09, 0.03, by = 0.03),
+                     limits = c(-0.11, 0.03)) +
+  labs(x = "Birth weight (kg)",
+       y = "Accumulated local effect") +
+  theme_classic(base_family = "Times New Roman") +
+  theme(axis.text = element_text(size = 10, color = "black"),
+        axis.ticks = element_line(color = "black"),
+        axis.line = element_line("black"),
+        axis.title.y = element_text(size = 10,
+                                    margin = margin(t = 0, # top
+                                                    r = 10, # right
+                                                    b = 0, # bottom
+                                                    l = 0)),
+        axis.title.x = element_text(size = 10,
+                                    margin = margin(t = 10, # top
+                                                    r = 0, # right
+                                                    b = 0, # bottom
+                                                    l = 0))),
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ecm", .feature == "birth_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(27, 59, by = 4),
+                       limits = c(27, 59)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-4850, 1525, by = 1275),
+                       limits = c(-4850, 1600)) +
+    labs(x = "Birth weight (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "mv", .feature == "birth_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(27, 59, by = 4),
+                       limits = c(27, 59)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-895, 1370, by = 453),
+                       limits = c(-895, 1370)) +
+    labs(x = "Birth weight (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  label_fontfamily = "Times New Roman",
+  nrow = 2,
+  labels = c("A", "B", "C", "D"),
+  label_size = 14)
+
+
+
+
+# serum_IgG_infrared
+
+plot_grid(
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ll", .feature == "serum_IgG_infrared") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(30, 4800, by = 950),
+                       limits = c(30, 4800)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.15, 0.25, by = 0.08),
+                       limits = c(-0.15, 0.25)) +
+    labs(x = "Serum IgG (mg/dL)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "lpl", .feature == "serum_IgG_infrared") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(30, 4800, by = 950),
+                       limits = c(30, 4800)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.05, 0.25, by = 0.06),
+                       limits = c(-0.06, 0.26)) +
+    labs(x = "Serum IgG (mg/dL)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ecm", .feature == "serum_IgG_infrared") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(30, 4800, by = 950),
+                       limits = c(30, 4800)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-1650, 1686, by = 783),
+                       limits = c(-1650, 1686)) +
+    labs(x = "Serum IgG (mg/dL)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "mv", .feature == "serum_IgG_infrared") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(30, 4800, by = 950),
+                       limits = c(30, 4800)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-600, 2700, by = 660),
+                       limits = c(-600, 2700)) +
+    labs(x = "Serum IgG (mg/dL)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  label_fontfamily = "Times New Roman",
+  nrow = 2,
+  labels = c("A", "B", "C", "D"),
+  label_size = 14)
+
+
+
