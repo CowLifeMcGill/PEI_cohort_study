@@ -9,8 +9,6 @@ require(lubridate)
 require(DataExplorer)
 require(mice)
 
-require(nlme)
-
 require(caret)
 require(doParallel)
 require(doSNOW)
@@ -769,7 +767,7 @@ wd.weaning_weight <- wd.ll4 %>%
 
 
 
-# Using the model to predict the weight of animals that were not weighted at weaning
+# Using the model developed by Cue et al. (2012) to predict the weight of animals that were not weighted at weaning
 
 wd.weaning_weight_pred <- wd.weaning_weight %>%
   filter(!is.na(age_weaning), 
@@ -1012,267 +1010,7 @@ wd.ll11 %>%
   summarytools::freq()
 
 
-
-# Variable selection ------------------------------------------------------
-# Using genetic algorithm to select the best subset of variables to predict length
-# of life, length of productive life, ECM, and Milk value
-
-wd.ll11 %>%
-  select(birth_weight, weaning_weight, 
-         weaning_age, weaning_adg) %>% 
-  cor(use = "pairwise.complete.obs")
-
-
-
-number <- 5
-repeats <- 10
-
-set.seed(1801)
-seeds <- sample.int(1000000, c(number*repeats + 1))
-seeds
-
-ctrlGA <- gafsControl(functions = caretGA,
-                      method = "LGOCV",
-                      p = 0.75,
-                      number = number,
-                      repeats = repeats, 
-                      metric = c(internal = "RMSE", 
-                                 external = "RMSE"),
-                      maximize = c(internal = FALSE,
-                                   external = FALSE),
-                      verbose = TRUE,
-                      seeds = seeds,
-                      genParallel = TRUE,
-                      allowParallel = TRUE)
-
-
-# Setting parallel clusters
-
-cl <- makePSOCKcluster(parallel::detectCores())
-registerDoParallel(cl, cores = parallel::detectCores())
-
-getDoParWorkers()
-
-
-
-# Running Genetic Algorithm for variable selection on complete data set
-
-start <- Sys.time()
-start
-
-# Length of life
-set.seed(1801)
-res.GA_ll_var_select <- gafs(x = wd.ll11 %>%
-                               select(birth_weight, weaning_weight, 
-                                      weaning_age, weaning_adg), 
-                             
-                             y = wd.ll11 %>% 
-                               pull(ll),
-                             
-                             iters = 50,
-                             popSize = 150,
-                             gafsControl = ctrlGA,
-                             
-                             # Passing options to "train" function
-                             method = "rpart2",
-                             na.action = na.pass)
-
-
-end1 <- Sys.time()
-end1-start
-
-
-
-# Length of productive life
-set.seed(1801)
-res.GA_lpl_var_select <- gafs(x = wd.ll11 %>%
-                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
-                                droplevels() %>% 
-                                select(birth_weight, weaning_weight, 
-                                       weaning_age, weaning_adg), 
-                              
-                              y = wd.ll11 %>%
-                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
-                                droplevels() %>%
-                                pull(lpl),
-                              
-                              iters = 50,
-                              popSize = 150,
-                              gafsControl = ctrlGA,
-                              
-                              # Passing options to "train" function
-                              method = "rpart2",
-                              na.action = na.pass)
-
-end2 <- Sys.time()
-end2-start
-
-
-
-# Energy-corrected milk
-set.seed(1801)
-res.GA_ecm_var_select <- gafs(x = wd.ll11 %>%
-                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
-                                droplevels() %>% 
-                                select(birth_weight, weaning_weight, 
-                                       weaning_age, weaning_adg), 
-                              
-                              y = wd.ll11 %>%
-                                filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
-                                droplevels() %>%
-                                pull(life_cum_ecm),
-                              
-                              iters = 50,
-                              popSize = 150,
-                              gafsControl = ctrlGA,
-                              
-                              # Passing options to "train" function
-                              method = "rpart2",
-                              na.action = na.pass)
-
-end3 <- Sys.time()
-end3-start
-
-
-
-# Milk value
-set.seed(1801)
-res.GA_mv_var_select <- gafs(x = wd.ll11 %>%
-                               filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
-                               droplevels() %>% 
-                               select(birth_weight, weaning_weight, 
-                                      weaning_age, weaning_adg), 
-                             
-                             y = wd.ll11 %>%
-                               filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
-                               droplevels() %>%
-                               pull(life_cum_milk_value),
-                             
-                             iters = 50,
-                             popSize = 150,
-                             gafsControl = ctrlGA,
-                             
-                             # Passing options to "train" function
-                             method = "rpart2",
-                             na.action = na.pass)
-
-end4 <- Sys.time()
-end4-start
-
-stopCluster(cl)
-
-
-# Genetic algorithm error plots during optimization
-
-legend <- get_legend(res.GA_ll_var_select %>% 
-                       plot() + 
-                       theme_bw(base_family = "Times New Roman") +
-                       theme(legend.position = "bottom",
-                             legend.text = element_text(size = 10),
-                             legend.title = element_text(size = 10),
-                             legend.key.size = unit(0.4, 'cm'),
-                             legend.title.align = 0.5))
-
-plot_grid(res.GA_ll_var_select%>% 
-            plot() + 
-            theme_bw(base_family = "Times New Roman") + 
-            theme(legend.position = "none") + 
-            theme(axis.text = element_text(size = 10, color = "black"),
-                  axis.ticks.x = element_line(color = "black"),
-                  axis.ticks.y = element_line(NA),
-                  axis.line = element_line("black"),
-                  axis.title.y = element_text(size = 10, 
-                                              margin = margin(t = 0, # top
-                                                              r = 10, # right
-                                                              b = 0, # bottom
-                                                              l = 0)),
-                  axis.title.x = element_text(size = 10,
-                                              margin = margin(t = 10, # top
-                                                              r = 0, # right
-                                                              b = 0, # bottom
-                                                              l = 0))),
-          
-          res.GA_lpl_var_select%>% 
-            plot() + 
-            theme_bw(base_family = "Times New Roman") + 
-            theme(legend.position = "none") + 
-            theme(axis.text = element_text(size = 10, color = "black"),
-                  axis.ticks.x = element_line(color = "black"),
-                  axis.ticks.y = element_line(NA),
-                  axis.line = element_line("black"),
-                  axis.title.y = element_text(size = 10, 
-                                              margin = margin(t = 0, # top
-                                                              r = 10, # right
-                                                              b = 0, # bottom
-                                                              l = 0)),
-                  axis.title.x = element_text(size = 10,
-                                              margin = margin(t = 10, # top
-                                                              r = 0, # right
-                                                              b = 0, # bottom
-                                                              l = 0))),
-          
-          res.GA_ecm_var_select%>% 
-            plot() + 
-            theme_bw(base_family = "Times New Roman") + 
-            theme(legend.position = "none") + 
-            theme(axis.text = element_text(size = 10, color = "black"),
-                  axis.ticks.x = element_line(color = "black"),
-                  axis.ticks.y = element_line(NA),
-                  axis.line = element_line("black"),
-                  axis.title.y = element_text(size = 10,
-                                              margin = margin(t = 0, # top
-                                                              r = 10, # right
-                                                              b = 0, # bottom
-                                                              l = 0)),
-                  axis.title.x = element_text(size = 10,
-                                              margin = margin(t = 10, # top
-                                                              r = 0, # right
-                                                              b = 0, # bottom
-                                                              l = 0))),
-          
-          res.GA_mv_var_select%>% 
-            plot() + 
-            theme_bw(base_family = "Times New Roman") + 
-            theme(legend.position = "none") + 
-            theme(axis.text = element_text(size = 10, color = "black"),
-                  axis.ticks.x = element_line(color = "black"),
-                  axis.ticks.y = element_line(NA),
-                  axis.line = element_line("black"),
-                  axis.title.y = element_text(size = 10,
-                                              margin = margin(t = 0, # top
-                                                              r = 10, # right
-                                                              b = 0, # bottom
-                                                              l = 0)),
-                  axis.title.x = element_text(size = 10,
-                                              margin = margin(t = 10, # top
-                                                              r = 0, # right
-                                                              b = 0, # bottom
-                                                              l = 0))),
-          
-          
-          NULL, # Creating space for legend
-          
-          ncol = 2, 
-          labels = c("A", "B", "C", "D"),
-          label_fontfamily = "Times New Roman",
-          rel_heights = c(0.99, 0.99, 0.15, 
-                          0.99, 0.99, 0.15)) + 
-  
-  draw_grob(legend, 0.54, 0, 0, 0.08)
-
-
-
-
 # Multiple imputation -----------------------------------------------------
-# Multiple imputation and selecting the subset of weight variables selected
-# by the genetoc algorithm. 
-
-
-# Upon further discussion with Elsa, we have decided to drop colostrum management
-# practices variables and keep only outcome variables. However, I will use all these
-# variables in the imputation and drop them after
-
-
 
 wd.imputed <- mice(data = wd.ll10 %>% 
                      select(-anm_id), 
@@ -1293,14 +1031,7 @@ wd.ll11 %>% summary()
 # Length of life
 wd.ll.imputed.stats <- wd.imputed %>% 
   mice::complete("long") %>% 
-  select(-c(
-    # Removing variables not selected by the genetic algorithm
-    weaning_weight, weaning_age, weaning_adg)) %>% 
-  
-  select(
-    # Selecting variables of interest
-    .imp, hrd_id, birth_year, birth_season, ll, birth_weight, navel_inf, 
-    scours, pneumonia, antib_treat, serum_IgG_infrared)
+  select(-c(.id, lpl, life_cum_ecm, life_cum_milk_value))
 
 
 
@@ -1310,14 +1041,7 @@ wd.lpl.imputed.stats <- wd.imputed %>%
   filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
   droplevels() %>% 
   
-  select(-c(
-    # Removing variables not selected by the genetic algorithm
-    weaning_weight, weaning_age, weaning_adg)) %>% 
-  
-  select(
-    # Selecting variables of interest
-    .imp, hrd_id, birth_year, birth_season, lpl, birth_weight, navel_inf, 
-    scours, pneumonia, antib_treat, serum_IgG_infrared)
+  select(-c(.id, ll, life_cum_ecm, life_cum_milk_value))
 
 
 # Energy-corrected milk
@@ -1326,14 +1050,7 @@ wd.ecm.imputed.stats <- wd.imputed %>%
   filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
   droplevels() %>% 
   
-  select(-c(
-    # Removing variables not selected by the genetic algorithm
-    weaning_weight, weaning_age, weaning_adg)) %>% 
-  
-  select(
-    # Selecting variables of interest
-    .imp, hrd_id, birth_year, birth_season, life_cum_ecm, birth_weight, navel_inf, 
-    scours, pneumonia, antib_treat, serum_IgG_infrared)
+  select(-c(.id, ll, lpl, life_cum_milk_value))
 
 
 
@@ -1343,16 +1060,9 @@ wd.mv.imputed.stats <- wd.imputed %>%
   filter(lpl != 0 & life_cum_ecm != 0 & life_cum_milk_value != 0) %>% 
   droplevels() %>% 
   
-  select(-c(
-    # Removing variables not selected by the genetic algorithm
-    weaning_weight, weaning_age, weaning_adg)) %>% 
+  select(-c(.id, ll, lpl, life_cum_ecm))
   
-  select(
-    # Selecting variables of interest
-    .imp, hrd_id, birth_year, birth_season, life_cum_milk_value, birth_weight, navel_inf, 
-    scours, pneumonia, antib_treat, serum_IgG_infrared)
-
-
+  
 
 # Length of Life ------------------------------------------------
 
@@ -1401,55 +1111,6 @@ summary(wd.ll.imput.train.split %>%
 summary(wd.ll.imput.val.split %>% 
           filter(.imp == 1))
 
-
-
-## Sanity check ####
-# Training a classic mixed effect model for each of the imputed files
-
-
-r2.mixeffect <- c()
-rmse.mixeffect <- c()
-
-for(i in 1:10) {
-  
-  ll.mixeffect <- lme(ll ~ birth_weight + navel_inf + scours + pneumonia + 
-                        antib_treat + serum_IgG_infrared,
-                      random = ~ 1|hrd_id/birth_year/birth_season,
-                      data = wd.ll.imput.train.split %>% 
-                        filter(.imp == i) %>% 
-                        select(-.imp))
-  
-  anova(ll.mixeffect, type = "marginal") %>%  
-    print()
-  
-  
-  r2.mixeffect[i] <- caret::R2(pred = predict(ll.mixeffect,
-                                              wd.ll.imput.val.split %>% 
-                                                filter(.imp == i)),
-                               obs = wd.ll.imput.val.split %>% 
-                                 filter(.imp == i) %>% 
-                                 pull(ll),
-                               formula = "traditional")
-  
-  rmse.mixeffect[i] <- caret::RMSE(pred = predict(ll.mixeffect,
-                                                  wd.ll.imput.val.split %>% 
-                                                    filter(.imp == i)),
-                                   obs = wd.ll.imput.val.split %>% 
-                                     filter(.imp == i) %>% 
-                                     pull(ll))
-  
-}
-
-
-mean(r2.mixeffect) %>% 
-  round(2)
-
-mean(rmse.mixeffect) %>% 
-  round(2)
-
-
-# None of the variables statistically differed to zero and the 
-# performance of the model was veeeeeeeery low
 
 
 
@@ -1673,7 +1334,6 @@ res.ll %>%
   summarise(Mean = mean(value),
             SD = sd(value)) %>% 
   mutate_if(is.numeric, round, 2) %>% 
-  # filter(metric %in% c("r2", "RMSE")) %>%
   arrange(desc(Mean))
 
 
@@ -1756,8 +1416,6 @@ for(i in 1:10) {
 }
 
 
-
-
 ale.ll.res.compiled <- data.frame()
 
 for(i in 1:10){
@@ -1774,7 +1432,6 @@ for(i in 1:10){
     
   }
 }
-
 
 
 
@@ -1807,55 +1464,6 @@ summary(wd.lpl.imput.train.split %>%
 
 summary(wd.lpl.imput.val.split %>% 
           filter(.imp == 1))
-
-
-
-## Sanity check ####
-# Training a classic mixed effect model for each of the imputed files
-
-
-r2.lpl.mixeffect <- c()
-rmse.lpl.mixeffect <- c()
-
-for(i in 1:10) {
-  
-  lpl.mixeffect <- lme(lpl ~ birth_weight  + navel_inf + scours + pneumonia + 
-                         antib_treat + serum_IgG_infrared,
-                       random = ~ 1|hrd_id/birth_season,
-                       data = wd.lpl.imput.train.split %>% 
-                         filter(.imp == i))
-  
-  anova(lpl.mixeffect, type = "marginal") %>%  
-    print()
-  
-  
-  r2.lpl.mixeffect[i] <- caret::R2(pred = predict(lpl.mixeffect,
-                                                  wd.lpl.imput.val.split %>% 
-                                                    filter(.imp == i)),
-                                   obs = wd.lpl.imput.val.split %>% 
-                                     filter(.imp == i) %>% 
-                                     pull(lpl),
-                                   formula = "traditional")
-  
-  rmse.lpl.mixeffect[i] <- caret::RMSE(pred = predict(lpl.mixeffect,
-                                                      wd.lpl.imput.val.split %>% 
-                                                        filter(.imp == i)),
-                                       obs = wd.lpl.imput.val.split %>% 
-                                         filter(.imp == i) %>% 
-                                         pull(lpl))
-  
-}
-
-
-mean(r2.lpl.mixeffect) %>% 
-  round(2)
-
-mean(rmse.lpl.mixeffect) %>% 
-  round(2)
-
-
-# Depending of the imputation round, Navel Infections differed than zero 
-# Performance of the model was also veeeeeeeery low
 
 
 
@@ -2075,8 +1683,7 @@ res.lpl %>%
   group_by(model, data.set, metric) %>% 
   summarise(Mean = mean(value),
             SD = sd(value)) %>% 
-  mutate_if(is.numeric, round, 3) %>% 
-  # filter(metric %in% c("r2", "RMSE")) %>%
+  mutate_if(is.numeric, round, 2) %>% 
   arrange(desc(Mean))
 
 
@@ -2123,13 +1730,12 @@ for(i in 1:10) {
     rbind(var.imp.lpl)
   
   print(
-    paste(i, " imputed data set finished. Only ", 10-i, " sets missing :)",
+    paste(i, " imputed data set finished. Only ", 10-i, " missing :)",
           sep = "")
   )
   
   
 }
-
 
 
 ### Accumulated local effect ####
@@ -2156,7 +1762,6 @@ for(i in 1:10) {
   
   
 }
-
 
 
 
@@ -2210,54 +1815,6 @@ summary(wd.ecm.imput.train.split %>%
 summary(wd.ecm.imput.val.split %>% 
           filter(.imp == 1))
 
-
-
-## Sanity check ####
-# Training a classic mixed effect model for each of the imputed files
-
-
-r2.ecm.mixeffect <- c()
-rmse.ecm.mixeffect <- c()
-
-for(i in 1:10) {
-  
-  ecm.mixeffect <- lme(life_cum_ecm ~ birth_weight  + navel_inf + scours + pneumonia + 
-                         antib_treat + serum_IgG_infrared,
-                       random = ~ 1|hrd_id/birth_season,
-                       data = wd.ecm.imput.train.split %>% 
-                         filter(.imp == i))
-  
-  anova(ecm.mixeffect, type = "marginal") %>%  
-    print()
-  
-  
-  r2.ecm.mixeffect[i] <- caret::R2(pred = predict(ecm.mixeffect,
-                                                  wd.ecm.imput.val.split %>% 
-                                                    filter(.imp == i)),
-                                   obs = wd.ecm.imput.val.split %>% 
-                                     filter(.imp == i) %>% 
-                                     pull(life_cum_ecm),
-                                   formula = "traditional")
-  
-  rmse.ecm.mixeffect[i] <- caret::RMSE(pred = predict(ecm.mixeffect,
-                                                      wd.ecm.imput.val.split %>% 
-                                                        filter(.imp == i)),
-                                       obs = wd.ecm.imput.val.split %>% 
-                                         filter(.imp == i) %>% 
-                                         pull(life_cum_ecm))
-  
-}
-
-
-mean(r2.ecm.mixeffect) %>% 
-  round(3)
-
-mean(rmse.ecm.mixeffect) %>% 
-  round(2)
-
-
-# Depending of the imputation round, Navel Infections differed than zero 
-# Performance of the model was also veeeeeeeery low
 
 
 
@@ -2392,7 +1949,6 @@ for(i in 1:10) {
 
 
 
-
 ### Support vector machine ####
 
 ecm.svm.models <- list()
@@ -2478,7 +2034,6 @@ res.ecm %>%
   summarise(Mean = mean(value),
             SD = sd(value)) %>% 
   mutate_if(is.numeric, round, 3) %>% 
-  # filter(metric %in% c("r2", "RMSE")) %>%
   arrange(desc(Mean))
 
 
@@ -2533,6 +2088,7 @@ for(i in 1:10) {
 }
 
 
+
 ### Accumulated local effect ####
 
 ale.ecm.res <- list()
@@ -2557,6 +2113,7 @@ for(i in 1:10) {
   
   
 }
+
 
 
 ale.ecm.res.compiled <- data.frame()
@@ -2606,56 +2163,6 @@ summary(wd.mv.imput.train.split %>%
 
 summary(wd.mv.imput.val.split %>% 
           filter(.imp == 1))
-
-
-
-## Sanity check ####
-# Training a classic mixed effect model for each of the imputed files
-
-
-r2.mv.mixeffect <- c()
-rmse.mv.mixeffect <- c()
-
-for(i in 1:10) {
-  
-  mv.mixeffect <- lme(life_cum_milk_value ~ birth_weight  + navel_inf + scours + pneumonia + 
-                        antib_treat + serum_IgG_infrared,
-                      random = ~ 1|hrd_id/birth_season,
-                      data = wd.mv.imput.train.split %>% 
-                        filter(.imp == i))
-  
-  anova(mv.mixeffect, type = "marginal") %>%  
-    print()
-  
-  
-  r2.mv.mixeffect[i] <- caret::R2(pred = predict(mv.mixeffect,
-                                                 wd.mv.imput.val.split %>% 
-                                                   filter(.imp == i)),
-                                  obs = wd.mv.imput.val.split %>% 
-                                    filter(.imp == i) %>% 
-                                    pull(life_cum_milk_value),
-                                  formula = "traditional")
-  
-  rmse.mv.mixeffect[i] <- caret::RMSE(pred = predict(mv.mixeffect,
-                                                     wd.mv.imput.val.split %>% 
-                                                       filter(.imp == i)),
-                                      obs = wd.mv.imput.val.split %>% 
-                                        filter(.imp == i) %>% 
-                                        pull(life_cum_milk_value))
-  
-}
-
-
-mean(r2.mv.mixeffect) %>% 
-  round(2)
-
-mean(rmse.mv.mixeffect) %>% 
-  round(2)
-
-
-# No variable was statistically significant 
-# Performance of the model was also veeeeeeeery low
-
 
 
 ## Training machine learning models ####
@@ -2874,8 +2381,7 @@ res.mv %>%
   group_by(model, data.set, metric) %>% 
   summarise(Mean = mean(value),
             SD = sd(value)) %>% 
-  mutate_if(is.numeric, round, 3) %>% 
-  # filter(metric %in% c("r2", "RMSE")) %>%
+  mutate_if(is.numeric, round, 2) %>% 
   arrange(desc(Mean))
 
 
@@ -2891,7 +2397,7 @@ predictors.mv <- list()
 for(i in 1:10) {
   
   plan("callr", workers = 14)
-  predictor <- Predictor$new(model = mv.svm.models[[i]], 
+  predictor <- Predictor$new(model = mv.rf.models[[i]], 
                              data = wd.mv.imputed.stats %>% 
                                filter(.imp == i) %>% 
                                select(-.imp),
@@ -2930,8 +2436,6 @@ for(i in 1:10) {
 }
 
 
-
-
 ### Accumulated local effect ####
 
 ale.mv.res <- list()
@@ -2956,6 +2460,7 @@ for(i in 1:10) {
   
   
 }
+
 
 
 
@@ -3007,7 +2512,6 @@ performance.res %>%
   filter(data.set == "training") %>% 
   data.frame() %>% 
   plyr::arrange(outcome, model, metric) %>% 
-  # mutate_if(is.numeric, round, 1)
   mutate_at("Mean", round, 1) %>% 
   mutate_at("SD", round, 3)
 
@@ -3016,7 +2520,6 @@ performance.res %>%
   filter(data.set == "validation") %>% 
   data.frame() %>% 
   plyr::arrange(outcome, model, metric) %>% 
-  # mutate_if(is.numeric, round, 2)
   mutate_at("Mean", round, 1) %>% 
   mutate_at("SD", round, 3)
 
@@ -3039,18 +2542,21 @@ varImp.plots <- plot_grid(
                                    hrd_id = "Herd",
                                    birth_year = "Birth year",
                                    birth_weight = "Birth weight",
+                                   weaning_weight = "Weaning weight",
+                                   weaning_age = "Weaning age",
+                                   weaning_adg = " Weaning ADG",
                                    birth_season = "Birth season",
                                    antib_treat = "Antibiotic treatment")) %>%
            arrange(desc(avg)),
          aes(y = reorder(feature, + avg),
              x = avg)) +
-    geom_point() +
+    geom_point(size = 0.9) +
     geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
                   width = 0.2) +
     theme_classic(base_family = "Times New Roman") + 
     scale_x_continuous(expand = expansion(mult = c(0, 0)),
-                       breaks = seq(1, 1.10, by = 0.02),
-                       limits = c(0.998, 1.1)) +
+                       breaks = seq(1, 1.16, by = 0.04),
+                       limits = c(0.998, 1.165)) +
     labs(x = "Variable importance") +
     theme_classic(base_family = "Times New Roman") +
     theme(axis.text = element_text(size = 10, color = "black"),
@@ -3075,19 +2581,22 @@ varImp.plots <- plot_grid(
                                    navel_inf = "Navel infection",
                                    hrd_id = "Herd",
                                    birth_year = "Birth year",
-                                   birht_weight = "Birth weight",
+                                   birth_weight = "Birth weight",
+                                   weaning_weight = "Weaning weight",
+                                   weaning_age = "Weaning age",
+                                   weaning_adg = " Weaning ADG",
                                    birth_season = "Birth season",
                                    antib_treat = "Antibiotic treatment")) %>%
            arrange(desc(avg)),
          aes(y = reorder(feature, + avg),
              x = avg)) +
-    geom_point() +
+    geom_point(size = 0.9) +
     geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
                   width = 0.2) +
     theme_classic(base_family = "Times New Roman") + 
     scale_x_continuous(expand = expansion(mult = c(0, 0)),
-                       breaks = seq(1, 1.10, by = 0.02),
-                       limits = c(0.998, 1.1)) +
+                       breaks = seq(1, 1.16, by = 0.04),
+                       limits = c(0.998, 1.165)) +
     labs(x = "Variable importance") +
     theme_classic(base_family = "Times New Roman") +
     theme(axis.text = element_text(size = 10, color = "black"),
@@ -3112,19 +2621,22 @@ varImp.plots <- plot_grid(
                                    navel_inf = "Navel infection",
                                    hrd_id = "Herd",
                                    birth_year = "Birth year",
-                                   birht_weight = "Birth weight",
+                                   birth_weight = "Birth weight",
+                                   weaning_weight = "Weaning weight",
+                                   weaning_age = "Weaning age",
+                                   weaning_adg = " Weaning ADG",
                                    birth_season = "Birth season",
                                    antib_treat = "Antibiotic treatment")) %>%
            arrange(desc(avg)),
          aes(y = reorder(feature, + avg),
              x = avg)) +
-    geom_point() +
+    geom_point(size = 0.9) +
     geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
                   width = 0.2) +
     theme_classic(base_family = "Times New Roman") + 
     scale_x_continuous(expand = expansion(mult = c(0, 0)),
-                       breaks = seq(1, 1.15, by = 0.03),
-                       limits = c(0.998, 1.15)) +
+                       breaks = seq(1, 1.16, by = 0.04),
+                       limits = c(0.998, 1.165)) +
     labs(x = "Variable importance") +
     theme_classic(base_family = "Times New Roman") +
     theme(axis.text = element_text(size = 10, color = "black"),
@@ -3149,19 +2661,22 @@ varImp.plots <- plot_grid(
                                    navel_inf = "Navel infection",
                                    hrd_id = "Herd",
                                    birth_year = "Birth year",
-                                   birht_weight = "Birth weight",
+                                   birth_weight = "Birth weight",
+                                   weaning_weight = "Weaning weight",
+                                   weaning_age = "Weaning age",
+                                   weaning_adg = " Weaning ADG",
                                    birth_season = "Birth season",
                                    antib_treat = "Antibiotic treatment")) %>%
            arrange(desc(avg)),
          aes(y = reorder(feature, + avg),
              x = avg)) +
-    geom_point() +
+    geom_point(size = 0.9) +
     geom_errorbar(aes(xmin = avg - sd, xmax = avg + sd), 
                   width = 0.2) +
     theme_classic(base_family = "Times New Roman") + 
     scale_x_continuous(expand = expansion(mult = c(0, 0)),
-                       breaks = seq(1, 1.12, by = 0.02),
-                       limits = c(0.998, 1.12)) +
+                       breaks = seq(1, 1.16, by = 0.04),
+                       limits = c(0.998, 1.165)) +
     labs(x = "Variable importance") +
     theme_classic(base_family = "Times New Roman") +
     theme(axis.text = element_text(size = 10, color = "black"),
@@ -3192,8 +2707,8 @@ varImp.plots
 var.factor <- c("antib_treat", "birth_season", "birth_year",
                 "hrd_id", "navel_inf", "pneumonia", "scours")
 
-var.num <- c("birth_weight", "serum_IgG_infrared")
 
+# Qualitative variables
 
 ale.res.compiled <- ale.ll.res.compiled %>% 
   mutate(outcome = "ll") %>% 
@@ -3210,21 +2725,8 @@ ale.res.compiled <- ale.ll.res.compiled %>%
                            levels = c("navel_inf", "scours", "pneumonia", 
                                       "antib_treat", "birth_year",
                                       "birth_season", "hrd_id", 
-                                      "birth_weight", "serum_IgG_infrared")))
-
-
-# Qualitative variables
-
-ale.res.compiled %>% 
-  filter(.feature %in% var.factor) %>% 
-  group_by(outcome, .feature, .borders) %>% 
-  summarise(AVG = mean(.value),
-            SD = sd(.value)) %>% 
-  data.frame() %>% 
-  plyr::arrange(outcome, .feature) %>% 
-  mutate_at("AVG", round, 1) %>%
-  mutate_at("SD", round, 2) %>%
-  rhandsontable::rhandsontable(useTypes = FALSE)
+                                      "birth_weight", "serum_IgG_infrared",
+                                      "weaning_weight", "weaning_age", "weaning_adg")))
   
   
   
@@ -3282,8 +2784,8 @@ plot_grid(
                      breaks = seq(27, 59, by = 4),
                      limits = c(27, 59)) +
   scale_y_continuous(expand = expansion(mult = c(0, 0)),
-                     breaks = seq(-0.09, 0.03, by = 0.03),
-                     limits = c(-0.11, 0.03)) +
+                     breaks = seq(-0.12, 0.03, by = 0.03),
+                     limits = c(-0.14, 0.04)) +
   labs(x = "Birth weight (kg)",
        y = "Accumulated local effect") +
   theme_classic(base_family = "Times New Roman") +
@@ -3314,8 +2816,8 @@ plot_grid(
                        breaks = seq(27, 59, by = 4),
                        limits = c(27, 59)) +
     scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
-                       breaks = seq(-4850, 1525, by = 1275),
-                       limits = c(-4850, 1600)) +
+                       breaks = seq(-1500, 500, by = 500),
+                       limits = c(-1600, 500)) +
     labs(x = "Birth weight (kg)",
          y = "Accumulated local effect") +
     theme_classic(base_family = "Times New Roman") +
@@ -3346,8 +2848,8 @@ plot_grid(
                        breaks = seq(27, 59, by = 4),
                        limits = c(27, 59)) +
     scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
-                       breaks = seq(-895, 1370, by = 453),
-                       limits = c(-895, 1370)) +
+                       breaks = seq(-600, 250, by = 170),
+                       limits = c(-650, 250)) +
     labs(x = "Birth weight (kg)",
          y = "Accumulated local effect") +
     theme_classic(base_family = "Times New Roman") +
@@ -3370,6 +2872,422 @@ plot_grid(
   labels = c("A", "B", "C", "D"),
   label_size = 14)
 
+
+
+# Weaning weight (kg)
+
+plot_grid(
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ll", .feature == "weaning_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = seq(60, 130, by = 14)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.25, 0.30, by = 0.11),
+                       limits = c(-0.25, 0.30)) +
+    labs(x = "Weaning weight (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "lpl", .feature == "weaning_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0.05, 0.01)),
+                       breaks = seq(60, 130, by = 14)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.10, 0.05, by = 0.03),
+                       limits = c(-0.10, 0.05)) +
+    labs(x = "Weaning weight (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ecm", .feature == "weaning_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0.05, 0.01)),
+                       breaks = seq(60, 130, by = 14)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-1250, 1250, by = 500),
+                       limits = c(-1250, 1250)) +
+    labs(x = "Weaning weight (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "mv", .feature == "weaning_weight") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.05, 0.01)),
+                       breaks = seq(60, 130, by = 14)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-650, 950, by = 320),
+                       limits = c(-650, 950)) +
+    labs(x = "Weaning weight (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  label_fontfamily = "Times New Roman",
+  nrow = 2,
+  labels = c("A", "B", "C", "D"),
+  label_size = 14)
+
+
+
+# Weaning age
+
+plot_grid(
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ll", .feature == "weaning_age") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = c(1.4, 1.9, 2.5, 3.0, 3.6)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.5, 0.30, by = 0.16),
+                       limits = c(-0.5, 0.3)) +
+    labs(x = "Weaning age (month)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "lpl", .feature == "weaning_age") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = c(1.4, 1.9, 2.5, 3.0, 3.6)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       # breaks = seq(-0.06, 0.07, by = 0.03),
+                       limits = c(-0.07, 0.07)) +
+    labs(x = "Weaning age (month)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ecm", .feature == "weaning_age") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = c(1.4, 1.9, 2.5, 3.0, 3.6)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-750, 1700, by = 490),
+                       limits = c(-750, 1700)) +
+    labs(x = "Weaning age (month)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "mv", .feature == "weaning_age") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01)),
+                       breaks = c(1.4, 1.9, 2.5, 3.0, 3.6)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-950, 600, by = 310),
+                       limits = c(-950, 600)) +
+    labs(x = "Weaning age (month)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  label_fontfamily = "Times New Roman",
+  nrow = 2,
+  labels = c("A", "B", "C", "D"),
+  label_size = 14)
+
+
+# Weaning adg
+
+plot_grid(
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ll", .feature == "weaning_adg") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(0.4, 1, by = 0.1),
+                       limits = c(0.35, 1.05)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.2, 0.5, by = 0.14),
+                       limits = c(-0.2, 0.5)) +
+    labs(x = "Weaning ADG (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "lpl", .feature == "weaning_adg") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(0.4, 1, by = 0.1),
+                       limits = c(0.35, 1.05)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-0.06, 0.10, by = 0.03),
+                       limits = c(-0.035, 0.11)) +
+    labs(x = "Weaning ADG (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "ecm", .feature == "weaning_adg") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") +
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(0.4, 1, by = 0.1),
+                       limits = c(0.35, 1.05)) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
+                       breaks = seq(-300, 1500, by = 352),
+                       limits = c(-300, 1500)) +
+    labs(x = "Weaning ADG (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  
+  
+  ggplot(ale.res.compiled %>% 
+           filter(outcome == "mv", .feature == "weaning_adg") %>% 
+           mutate(.borders = as.numeric(.borders)),
+         aes(x = .borders,
+             y = .value)) +
+    geom_line(aes(group = imp),
+              colour = "grey") +
+    geom_smooth(se = F)+
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(0.4, 1, by = 0.1),
+                       limits = c(0.35, 1.05)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                       breaks = seq(-400, 1500, by = 380),
+                       limits = c(-400, 1500)) +
+    labs(x = "Weaning ADG (kg)",
+         y = "Accumulated local effect") +
+    theme_classic(base_family = "Times New Roman") +
+    theme(axis.text = element_text(size = 10, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = 10,
+                                      margin = margin(t = 0, # top
+                                                      r = 10, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = 10,
+                                      margin = margin(t = 10, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  label_fontfamily = "Times New Roman",
+  nrow = 2,
+  labels = c("A", "B", "C", "D"),
+  label_size = 14)
 
 
 
@@ -3423,8 +3341,8 @@ plot_grid(
                        breaks = seq(30, 4800, by = 950),
                        limits = c(30, 4800)) +
     scale_y_continuous(expand = expansion(mult = c(0, 0)),
-                       breaks = seq(-0.05, 0.25, by = 0.06),
-                       limits = c(-0.06, 0.26)) +
+                       breaks = seq(-0.1, 0.25, by = 0.07),
+                       limits = c(-0.11, 0.25)) +
     labs(x = "Serum IgG (mg/dL)",
          y = "Accumulated local effect") +
     theme_classic(base_family = "Times New Roman") +
@@ -3455,8 +3373,8 @@ plot_grid(
                        breaks = seq(30, 4800, by = 950),
                        limits = c(30, 4800)) +
     scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
-                       breaks = seq(-1650, 1686, by = 783),
-                       limits = c(-1650, 1686)) +
+                       breaks = seq(-800, 600, by = 280),
+                       limits = c(-800, 650)) +
     labs(x = "Serum IgG (mg/dL)",
          y = "Accumulated local effect") +
     theme_classic(base_family = "Times New Roman") +
@@ -3487,8 +3405,8 @@ plot_grid(
                        breaks = seq(30, 4800, by = 950),
                        limits = c(30, 4800)) +
     scale_y_continuous(expand = expansion(mult = c(0.05, 0)),
-                       breaks = seq(-600, 2700, by = 660),
-                       limits = c(-600, 2700)) +
+                       breaks = seq(-700, 2000, by = 660),
+                       limits = c(-750, 2000)) +
     labs(x = "Serum IgG (mg/dL)",
          y = "Accumulated local effect") +
     theme_classic(base_family = "Times New Roman") +
@@ -3510,6 +3428,5 @@ plot_grid(
   nrow = 2,
   labels = c("A", "B", "C", "D"),
   label_size = 14)
-
 
 
