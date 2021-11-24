@@ -169,7 +169,7 @@ ModelEvaluation <- function(models,
   
   res <- tibble(imputation = imputation,
                 model = model.name,
-                data.set = c(rep("training", 5), rep("validation", 4)),
+                data.set = c(rep("training", 4), rep("validation", 4)),
                 metric = rep(c("r2", "MAE", "RMSE", "MAPE"), 2),
                 value = c(r2.train, mae.train, rmse.train, mape.train,
                           r2.val, mae.val, rmse.val, mape.val))
