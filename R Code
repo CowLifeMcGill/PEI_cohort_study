@@ -127,7 +127,7 @@ ModelEvaluation <- function(models,
                        filter(.imp == imputation) %>% 
                        pull(target.variable))
   
-  mape.train <- (Metrics::mape(predicted = predict(models[[imputation]], 
+  smape.train <- (Metrics::smape(predicted = predict(models[[imputation]], 
                                   train.data %>% 
                                     filter(.imp == imputation)),
                    actual = train.data %>% 
@@ -159,7 +159,7 @@ ModelEvaluation <- function(models,
                      filter(.imp == imputation) %>% 
                      pull(target.variable))
   
-  mape.val <- (Metrics::mape(predicted = predict(models[[imputation]], 
+  smape.val <- (Metrics::smape(predicted = predict(models[[imputation]], 
                                 validation.data %>% 
                                   filter(.imp == imputation)),
                  actual = validation.data %>% 
@@ -170,9 +170,9 @@ ModelEvaluation <- function(models,
   res <- tibble(imputation = imputation,
                 model = model.name,
                 data.set = c(rep("training", 4), rep("validation", 4)),
-                metric = rep(c("r2", "MAE", "RMSE", "MAPE"), 2),
-                value = c(r2.train, mae.train, rmse.train, mape.train,
-                          r2.val, mae.val, rmse.val, mape.val))
+                metric = rep(c("r2", "MAE", "RMSE", "SMAPE"), 2),
+                value = c(r2.train, mae.train, rmse.train, smape.train,
+                          r2.val, mae.val, rmse.val, smape.val))
   
   return(res)
   
@@ -2490,7 +2490,7 @@ performance.res <- res.ll %>%
   mutate(outcome = factor(outcome,
                           levels = c("ll", "lpl", "ecm", "mv")),
          metric = factor(metric,
-                         levels = c("r2", "RMSE", "MAE", "RPE")),
+                         levels = c("r2", "RMSE", "MAE", "SMAPE")),
          model = factor(model,
                         levels = c("ctree", "gbm", "rf", "svm")))
 
