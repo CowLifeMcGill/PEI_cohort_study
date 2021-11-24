@@ -96,19 +96,6 @@ getSeason <- function(DATES) {
 
 
 
-# Relative prediction error 
-RPE <- function(obs, pred) {
-  rmse <- caret::RMSE(pred = pred,
-                      obs = obs)
-  rpe <- (rmse/mean(obs)) *100
-  
-  return(rpe)
-}
-
-
-
-
-
 ModelEvaluation <- function(models,
                             target.variable,
                             train.data,
@@ -124,7 +111,7 @@ ModelEvaluation <- function(models,
                  obs = train.data %>% 
                    filter(.imp == imputation) %>% 
                    pull(target.variable),
-                 formula = "traditional")
+                 formula = "corr")
   
   mae.train <- MAE(pred = predict(models[[imputation]], 
                                   train.data %>% 
@@ -140,13 +127,12 @@ ModelEvaluation <- function(models,
                        filter(.imp == imputation) %>% 
                        pull(target.variable))
   
-  rpe.train <- RPE(pred = predict(models[[imputation]], 
+  mape.train <- (Metrics::mape(predicted = predict(models[[imputation]], 
                                   train.data %>% 
                                     filter(.imp == imputation)),
-                   obs = train.data %>% 
+                   actual = train.data %>% 
                      filter(.imp == imputation) %>% 
-                     pull(target.variable))
-  
+                     pull(target.variable)) *100)  
   
   
   # Validation data set
@@ -157,7 +143,7 @@ ModelEvaluation <- function(models,
                obs = validation.data %>% 
                  filter(.imp == imputation) %>% 
                  pull(target.variable),
-               formula = "traditional")
+               formula = "corr")
   
   mae.val <- MAE(pred = predict(models[[imputation]], 
                                 validation.data %>% 
@@ -173,23 +159,25 @@ ModelEvaluation <- function(models,
                      filter(.imp == imputation) %>% 
                      pull(target.variable))
   
-  rpe.val <- RPE(pred = predict(models[[imputation]], 
+  mape.val <- (Metrics::mape(predicted = predict(models[[imputation]], 
                                 validation.data %>% 
                                   filter(.imp == imputation)),
-                 obs = validation.data %>% 
+                 actual = validation.data %>% 
                    filter(.imp == imputation) %>% 
-                   pull(target.variable))
+                   pull(target.variable)) *100)
+  
   
   res <- tibble(imputation = imputation,
                 model = model.name,
-                data.set = c(rep("training", 4), rep("validation", 4)),
-                metric = rep(c("r2", "MAE", "RMSE", "RPE"), 2),
-                value = c(r2.train, mae.train, rmse.train, rpe.train, 
-                          r2.val, mae.val, rmse.val, rpe.val))
+                data.set = c(rep("training", 5), rep("validation", 4)),
+                metric = rep(c("r2", "MAE", "RMSE", "MAPE"), 2),
+                value = c(r2.train, mae.train, rmse.train, mape.train,
+                          r2.val, mae.val, rmse.val, mape.val))
   
   return(res)
   
 }
+
 
 
 # Data --------------------------------------------------------------------
