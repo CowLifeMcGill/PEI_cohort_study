@@ -96,6 +96,16 @@ getSeason <- function(DATES) {
 
 
 
+# Function to calculate the Mean arctangent absolute percentage error as proposed
+# by Kim & Kim (2016) DOI: https://doi.org/10.1016/j.ijforecast.2015.12.003
+MAAPE <- function(obs, pred){
+  
+
+  
+  return(mean(atan(abs(obs - pred)/abs(obs))))
+  
+}
+
 ModelEvaluation <- function(models,
                             target.variable,
                             train.data,
@@ -127,13 +137,13 @@ ModelEvaluation <- function(models,
                        filter(.imp == imputation) %>% 
                        pull(target.variable))
   
-  smape.train <- (Metrics::smape(predicted = predict(models[[imputation]], 
-                                  train.data %>% 
-                                    filter(.imp == imputation)),
-                   actual = train.data %>% 
-                     filter(.imp == imputation) %>% 
-                     pull(target.variable)) *100)  
   
+  maape.train <- MAAPE(pred = predict(models[[imputation]], 
+                                    train.data %>% 
+                                      filter(.imp == imputation)),
+                     obs = train.data %>% 
+                       filter(.imp == imputation) %>% 
+                       pull(target.variable)) * 100  
   
   # Validation data set
   
@@ -159,25 +169,23 @@ ModelEvaluation <- function(models,
                      filter(.imp == imputation) %>% 
                      pull(target.variable))
   
-  smape.val <- (Metrics::smape(predicted = predict(models[[imputation]], 
-                                validation.data %>% 
-                                  filter(.imp == imputation)),
-                 actual = validation.data %>% 
-                   filter(.imp == imputation) %>% 
-                   pull(target.variable)) *100)
-  
+  maape.val <- MAAPE(pred = predict(models[[imputation]], 
+                                  validation.data %>% 
+                                    filter(.imp == imputation)),
+                   obs = validation.data %>% 
+                     filter(.imp == imputation) %>% 
+                     pull(target.variable)) * 100  
   
   res <- tibble(imputation = imputation,
                 model = model.name,
                 data.set = c(rep("training", 4), rep("validation", 4)),
-                metric = rep(c("r2", "MAE", "RMSE", "SMAPE"), 2),
-                value = c(r2.train, mae.train, rmse.train, smape.train,
-                          r2.val, mae.val, rmse.val, smape.val))
+                metric = rep(c("r2", "MAE", "RMSE", "MAAPE"), 2),
+                value = c(r2.train, mae.train, rmse.train, maape.train,
+                          r2.val, mae.val, rmse.val, maape.val))
   
   return(res)
   
 }
-
 
 
 # Data --------------------------------------------------------------------
