@@ -1459,8 +1459,9 @@ summary(ll.bart)
 
 ll.bart$num_trees # 50
 ll.bart$k # 2
-ll.bart$nu # 3
+ll.bart$nu # 4
 ll.bart$q # 0.7
+
 
 # Assessing the model
 
@@ -1539,29 +1540,20 @@ perct.res.ll %>%
 yhat.ll  <- function(X.model, newdata) as.numeric(predict(X.model, newdata))
 
 
-
 ale.ll.weaning_age <- ALEPlot1(X = wd5 %>%
-           select(birth_weight, weaning_weight, weaning_age, weaning_adg,
-                  navel_inf, scours, pneumonia, serum_IgG, antib_treat,  
-                  birth_season, birth_year, hrd_id) %>% 
-           as.data.frame(),
-         X.model = ll.bart,
-         pred.fun = yhat.ll,
-         
-         J = "weaning_age",
-         K = 100)
+                               select(birth_weight, weaning_weight, weaning_age, weaning_adg,
+                                      navel_inf, scours, pneumonia, serum_IgG, antib_treat,  
+                                      birth_season, birth_year, hrd_id) %>% 
+                               as.data.frame(),
+                             X.model = ll.bart,
+                             pred.fun = yhat.ll,
+                             
+                             J = "weaning_age",
+                             K = 100)
 
 
-ale.ll.serum_IgG <- ALEPlot1(X = wd5 %>%
-                                 select(birth_weight, weaning_weight, weaning_age, weaning_adg,
-                                        navel_inf, scours, pneumonia, serum_IgG, antib_treat,  
-                                        birth_season, birth_year, hrd_id) %>% 
-                                 as.data.frame(),
-                               X.model = ll.bart,
-                               pred.fun = yhat.ll,
-                               
-                               J = "serum_IgG",
-                               K = 100)
+ale.ll.weaning_age$x.values[ale.ll.weaning_age$f.values == max(ale.ll.weaning_age$f.values)]
+
 
 
 ale.ll.weaning_adg <- ALEPlot1(X = wd5 %>%
@@ -1576,90 +1568,121 @@ ale.ll.weaning_adg <- ALEPlot1(X = wd5 %>%
                              K = 100)
 
 
+ale.ll.weaning_adg$x.values[ale.ll.weaning_adg$f.values == min(ale.ll.weaning_adg$f.values)]
+
+
+
+
+ale.ll.birth_weight <- ALEPlot1(X = wd5 %>%
+                                 select(birth_weight, weaning_weight, weaning_age, weaning_adg,
+                                        navel_inf, scours, pneumonia, serum_IgG, antib_treat,  
+                                        birth_season, birth_year, hrd_id) %>% 
+                                 as.data.frame(),
+                               X.model = ll.bart,
+                               pred.fun = yhat.ll,
+                               
+                               J = "birth_weight",
+                               K = 100)
+
+ale.ll.birth_weight$x.values[ale.ll.birth_weight$f.values == max(ale.ll.birth_weight$f.values)]
+
+
+
+text.size <- 8
 
 ll.ALEs <- cowplot::plot_grid(
 
-ggplot() +
-  geom_line(aes(y = ale.ll.weaning_age$f.values,
-                x = ale.ll.weaning_age$x.values),
-            size = 0.5,
-            color = "#5CB85C") +
+  ggplot() +
+    geom_line(aes(y = ale.ll.weaning_age$f.values,
+                  x = ale.ll.weaning_age$x.values),
+              linewidth = 0.5,
+              color = "#5CB85C") +
+    
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(breaks = seq(1.4, 3.7, by = 0.5))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(min(ale.ll.weaning_age$f.values), 
+                                          max(ale.ll.weaning_age$f.values), 
+                                          by = (max(ale.ll.weaning_age$f.values) - min(ale.ll.weaning_age$f.values))/3), 2))+#,
+                       # expand = expansion(mult = c(0.02, 0.01))) +
+    labs(x = "Weaning age (month)",
+         y = "ALE  LL (year)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = text.size,
+                                      margin = margin(t = 0, # top
+                                                      r = 5, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = text.size,
+                                      margin = margin(t = 5, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
   
-  theme_classic(base_family = "Times New Roman") + 
-  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-  # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
-  labs(x = "Weaning age (month)",
-       y = "ALE") +
-  theme(axis.text = element_text(size = 10, color = "black"),
-        axis.ticks = element_line(color = "black"),
-        axis.line = element_line("black"),
-        axis.title.y = element_text(size = 10,
-                                    margin = margin(t = 0, # top
-                                                    r = 5, # right
-                                                    b = 0, # bottom
-                                                    l = 0)),
-        axis.title.x = element_text(size = 10,
-                                    margin = margin(t = 5, # top
-                                                    r = 0, # right
-                                                    b = 0, # bottom
-                                                    l = 0))),
-
-ggplot() +
-  geom_line(aes(y = ale.ll.serum_IgG$f.values,
-                x = ale.ll.serum_IgG$x.values),
-            size = 0.5,
-            color = "#5CB85C") +
+  ggplot() +
+    geom_line(aes(y = ale.ll.weaning_adg$f.values,
+                  x = ale.ll.weaning_adg$x.values),
+              linewidth = 0.5,
+              color = "#5CB85C") +
+    
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(breaks = round(seq(0.50, 1, by = (1-0.5)/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(-0.2, 0.2, by = abs(-0.2-0.2)/3),2)) +
+    labs(x = "Weaning average daily gain (kg/day)",
+         y = "ALE  LL (year)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = text.size,
+                                      margin = margin(t = 0, # top
+                                                      r = 5, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = text.size,
+                                      margin = margin(t = 5, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
   
-  theme_classic(base_family = "Times New Roman") + 
-  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-  # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
-  labs(x = "Serum immunoglobulin G (mg/dL)",
-       y = "ALE") +
-  theme(axis.text = element_text(size = 10, color = "black"),
-        axis.ticks = element_line(color = "black"),
-        axis.line = element_line("black"),
-        axis.title.y = element_text(size = 10,
-                                    margin = margin(t = 0, # top
-                                                    r = 5, # right
-                                                    b = 0, # bottom
-                                                    l = 0)),
-        axis.title.x = element_text(size = 10,
-                                    margin = margin(t = 5, # top
-                                                    r = 0, # right
-                                                    b = 0, # bottom
-                                                    l = 0))),
-
-ggplot() +
-  geom_line(aes(y = ale.ll.weaning_adg$f.values,
-                x = ale.ll.weaning_adg$x.values),
-            size = 0.5,
-            color = "#5CB85C") +
+  ggplot() +
+    geom_line(aes(y = ale.ll.birth_weight$f.values,
+                  x = ale.ll.birth_weight$x.values),
+              linewidth = 0.5,
+              color = "#46B8DA") +
+    
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(breaks = round(seq(30, 58, by = (58-30)/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(-0.30, 0.10, by = abs((-0.30-0.10))/3), 2),
+                      limits = c(-0.33, 0.10))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    labs(x = "Birth weight (kg)",
+         y = "ALE  LL (year)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = text.size,
+                                      margin = margin(t = 0, # top
+                                                      r = 5, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = text.size,
+                                      margin = margin(t = 5, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
   
-  theme_classic(base_family = "Times New Roman") + 
-  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-  # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
-  labs(x = "Weaning average daily gain (kg/day)",
-       y = "ALE") +
-  theme(axis.text = element_text(size = 10, color = "black"),
-        axis.ticks = element_line(color = "black"),
-        axis.line = element_line("black"),
-        axis.title.y = element_text(size = 10,
-                                    margin = margin(t = 0, # top
-                                                    r = 5, # right
-                                                    b = 0, # bottom
-                                                    l = 0)),
-        axis.title.x = element_text(size = 10,
-                                    margin = margin(t = 5, # top
-                                                    r = 0, # right
-                                                    b = 0, # bottom
-                                                    l = 0))),
-
-nrow = 1,
-labels = c("A", "B", "C"),
-label_fontfamily = "Times New Roman")
+  nrow = 1,
+  labels = c("A", "B", "C"),
+  label_fontfamily = "Times New Roman",
+  label_size = 11.5)
 
 
 ll.ALEs
+
 
 
 # Length of productive life ----------------------------------------------------------
@@ -1788,6 +1811,9 @@ ale.lpl.weaning_age <- ALEPlot1(X = wd5 %>%
                                J = "weaning_age",
                                K = 100)
 
+ale.lpl.weaning_age$x.values[ale.lpl.weaning_age$f.values == max(ale.lpl.weaning_age$f.values)]
+
+
 
 ale.lpl.weaning_adg <- ALEPlot1(X = wd5 %>%
                                  select(birth_weight, weaning_weight, weaning_age, weaning_adg,
@@ -1800,6 +1826,8 @@ ale.lpl.weaning_adg <- ALEPlot1(X = wd5 %>%
                                J = "weaning_adg",
                                K = 100)
 
+
+ale.lpl.weaning_adg$x.values[ale.lpl.weaning_adg$f.values == min(ale.lpl.weaning_adg$f.values)]
 
 
 ale.lpl.birth_weight <- ALEPlot1(X = wd5 %>%
@@ -1814,28 +1842,38 @@ ale.lpl.birth_weight <- ALEPlot1(X = wd5 %>%
                               K = 100)
 
 
+ale.lpl.birth_weight$x.values[ale.lpl.birth_weight$f.values == min(ale.lpl.birth_weight$f.values)]
+
+
+text.size <- 8
+
+
 lpl.ALEs <- cowplot::plot_grid(
   
   ggplot() +
     geom_line(aes(y = ale.lpl.weaning_age$f.values,
                   x = ale.lpl.weaning_age$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#46B8DA") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = seq(1.4, 3.7, by = 0.5))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(min(ale.lpl.weaning_age$f.values), 
+                                    max(ale.lpl.weaning_age$f.values), 
+                                    by = (max(ale.lpl.weaning_age$f.values) - min(ale.lpl.weaning_age$f.values))/3), 2))+#,
+                       # expand = expansion(mult = c(0.02, 0.01))) +
     labs(x = "Weaning age (month)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE  LPL (year)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -1844,23 +1882,25 @@ lpl.ALEs <- cowplot::plot_grid(
   ggplot() +
     geom_line(aes(y = ale.lpl.weaning_adg$f.values,
                   x = ale.lpl.weaning_adg$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#46B8DA") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = round(seq(0.50, 1, by = (1-0.5)/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = c(-0.1, 0, 0.1, 0.2),
+                       limits = c(-0.12, 0.2)) +
     labs(x = "Weaning average daily gain (kg/day)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE  LPL (year)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -1869,23 +1909,25 @@ lpl.ALEs <- cowplot::plot_grid(
   ggplot() +
     geom_line(aes(y = ale.lpl.birth_weight$f.values,
                   x = ale.lpl.birth_weight$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#46B8DA") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = round(seq(30, 58, by = (58-30)/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(-0.15, 0.10, by = abs((-0.15-0.10))/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
     labs(x = "Birth weight (kg)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE  LPL (year)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -1893,11 +1935,12 @@ lpl.ALEs <- cowplot::plot_grid(
   
   nrow = 1,
   labels = c("D", "E", "F"),
-  label_fontfamily = "Times New Roman")
+  label_fontfamily = "Times New Roman",
+  label_size = 11.5,
+  label_y = 1.1)
 
 
 lpl.ALEs
-
 
 # Energy-corrected milk ----------------------------------------------------------
 
@@ -1935,10 +1978,10 @@ ecm.bart <- bartMachineCV(X = wd5 %>%
 
 summary(ecm.bart)
 
-ecm.bart$num_trees # 400
+ecm.bart$num_trees # 200
 ecm.bart$k # 2
-ecm.bart$nu # 2
-ecm.bart$q # 0.9
+ecm.bart$nu # 3
+ecm.bart$q # 0.8
 
 
 
@@ -2026,6 +2069,9 @@ ale.ecm.serum_IgG <- ALEPlot1(X = wd5 %>%
                                 J = "serum_IgG",
                                 K = 100)
 
+ale.ecm.serum_IgG$x.values[ale.ecm.serum_IgG$f.values == max(ale.ecm.serum_IgG$f.values)]
+
+
 
 ale.ecm.birth_weight <- ALEPlot1(X = wd5 %>%
                                    select(birth_weight, weaning_weight, weaning_age, weaning_adg,
@@ -2038,6 +2084,8 @@ ale.ecm.birth_weight <- ALEPlot1(X = wd5 %>%
                                  J = "birth_weight",
                                  K = 100)
 
+ale.ecm.birth_weight$x.values[ale.ecm.birth_weight$f.values == max(ale.ecm.birth_weight$f.values)]
+
 ale.ecm.weaning_adg <- ALEPlot1(X = wd5 %>%
                                   select(birth_weight, weaning_weight, weaning_age, weaning_adg,
                                          navel_inf, scours, pneumonia, serum_IgG, antib_treat,  
@@ -2049,29 +2097,33 @@ ale.ecm.weaning_adg <- ALEPlot1(X = wd5 %>%
                                 J = "weaning_adg",
                                 K = 100)
 
+ale.ecm.weaning_adg$x.values[ale.ecm.weaning_adg$f.values == min(ale.ecm.weaning_adg$f.values)]
+
+
+text.size <- 8
 
 ecm.ALEs <- cowplot::plot_grid(
   
   ggplot() +
     geom_line(aes(y = ale.ecm.serum_IgG$f.values,
                   x = ale.ecm.serum_IgG$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#EEA236") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
+    scale_x_continuous(breaks = round(seq(0, 4800, by = abs(0-4800)/4),0)) +
     # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
     labs(x = "Serum immunoglobulin G (mg/dL)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE  ECM (kg)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -2080,23 +2132,25 @@ ecm.ALEs <- cowplot::plot_grid(
     ggplot() +
     geom_line(aes(y = ale.ecm.birth_weight$f.values,
                   x = ale.ecm.birth_weight$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#EEA236") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = round(seq(30, 58, by = (58-30)/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(-2500, 1000, by = abs(-2500-1000)/3)))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
     labs(x = "Birth weight (kg)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE  ECM (kg)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -2105,23 +2159,24 @@ ecm.ALEs <- cowplot::plot_grid(
   ggplot() +
     geom_line(aes(y = ale.ecm.weaning_adg$f.values,
                   x = ale.ecm.weaning_adg$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#EEA236") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = round(seq(0.50, 1, by = (1-0.5)/4), 2)) +#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(-2000, 2000, by = abs(-2000-2000)/3))) +
     labs(x = "Weaning average daily gain (kg/day)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE  ECM (kg)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -2129,7 +2184,9 @@ ecm.ALEs <- cowplot::plot_grid(
   
   nrow = 1,
   labels = c("G", "H", "I"),
-  label_fontfamily = "Times New Roman")
+  label_fontfamily = "Times New Roman",
+  label_size = 11.5,
+  label_y = 1.1)
 
 
 ecm.ALEs
@@ -2173,9 +2230,9 @@ mv.bart <- bartMachineCV(X = wd5 %>%
 
 summary(mv.bart)
 
-mv.bart$num_trees # 400
+mv.bart$num_trees # 100
 mv.bart$k # 2
-mv.bart$nu # 3
+mv.bart$nu # 2
 mv.bart$q # 0.9
 
 # Assessing the model
@@ -2267,6 +2324,9 @@ ale.mv.serum_IgG <- ALEPlot1(X = wd5 %>%
                               J = "serum_IgG",
                               K = 100)
 
+ale.mv.serum_IgG$x.values[ale.mv.serum_IgG$f.values == max(ale.mv.serum_IgG$f.values)]
+
+
 
 ale.mv.birth_weight <- ALEPlot1(X = wd5 %>%
                                    select(birth_weight, weaning_weight, weaning_age, weaning_adg,
@@ -2278,6 +2338,10 @@ ale.mv.birth_weight <- ALEPlot1(X = wd5 %>%
                                  
                                  J = "birth_weight",
                                  K = 100)
+
+
+ale.mv.birth_weight$x.values[ale.mv.birth_weight$f.values == max(ale.mv.birth_weight$f.values)]
+
 
 ale.mv.weaning_age <- ALEPlot1(X = wd5 %>%
                                   select(birth_weight, weaning_weight, weaning_age, weaning_adg,
@@ -2291,53 +2355,33 @@ ale.mv.weaning_age <- ALEPlot1(X = wd5 %>%
                                 K = 100)
 
 
+ale.mv.weaning_age$x.values[ale.mv.weaning_age$f.values == max(ale.mv.weaning_age$f.values)]
+
+
+text.size <- 8
+
 mv.ALEs <- cowplot::plot_grid(
   
   ggplot() +
     geom_line(aes(y = ale.mv.serum_IgG$f.values,
                   x = ale.mv.serum_IgG$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#9632B8") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = round(seq(0, 4800, by = abs(0-4800)/4),0)) +
+    scale_y_continuous(breaks = round(seq(-1000, 1500, by = abs(-1000-1500)/3),0)) +
     labs(x = "Serum immunoglobulin G (mg/dL)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE milk value ($CAD)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
-                                      margin = margin(t = 5, # top
-                                                      r = 0, # right
-                                                      b = 0, # bottom
-                                                      l = 0))),
-  
-  ggplot() +
-    geom_line(aes(y = ale.mv.birth_weight$f.values,
-                  x = ale.mv.birth_weight$x.values),
-              size = 0.5,
-              color = "#9632B8") +
-    
-    theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
-    labs(x = "Birth weight (kg)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
-          axis.ticks = element_line(color = "black"),
-          axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
-                                      margin = margin(t = 0, # top
-                                                      r = 5, # right
-                                                      b = 0, # bottom
-                                                      l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -2346,23 +2390,50 @@ mv.ALEs <- cowplot::plot_grid(
   ggplot() +
     geom_line(aes(y = ale.mv.weaning_age$f.values,
                   x = ale.mv.weaning_age$x.values),
-              size = 0.5,
+              linewidth = 0.5,
               color = "#9632B8") +
     
     theme_classic(base_family = "Times New Roman") + 
-    scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(breaks = seq(1.4, 3.7, by = 0.5))+#,
+    # expand = expansion(mult = c(0.01, 0.01))) +
+    scale_y_continuous(breaks = round(seq(-1200, 1000, by = abs(-1200-1000)/3),0)) +
     labs(x = "Weaning age (month)",
-         y = "ALE") +
-    theme(axis.text = element_text(size = 10, color = "black"),
+         y = "ALE milk value ($CAD)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
           axis.ticks = element_line(color = "black"),
           axis.line = element_line("black"),
-          axis.title.y = element_text(size = 10,
+          axis.title.y = element_text(size = text.size,
                                       margin = margin(t = 0, # top
                                                       r = 5, # right
                                                       b = 0, # bottom
                                                       l = 0)),
-          axis.title.x = element_text(size = 10,
+          axis.title.x = element_text(size = text.size,
+                                      margin = margin(t = 5, # top
+                                                      r = 0, # right
+                                                      b = 0, # bottom
+                                                      l = 0))),
+  
+  ggplot() +
+    geom_line(aes(y = ale.mv.birth_weight$f.values,
+                  x = ale.mv.birth_weight$x.values),
+              linewidth = 0.5,
+              color = "#9632B8") +
+    
+    theme_classic(base_family = "Times New Roman") + 
+    scale_x_continuous(breaks = round(seq(30, 58, by = (58-30)/4), 2))+#,
+                       # expand = expansion(mult = c(0.01, 0.01))) +
+    # scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    labs(x = "Birth weight (kg)",
+         y = "ALE milk value ($CAD)") +
+    theme(axis.text = element_text(size = text.size, color = "black"),
+          axis.ticks = element_line(color = "black"),
+          axis.line = element_line("black"),
+          axis.title.y = element_text(size = text.size,
+                                      margin = margin(t = 0, # top
+                                                      r = 5, # right
+                                                      b = 0, # bottom
+                                                      l = 0)),
+          axis.title.x = element_text(size = text.size,
                                       margin = margin(t = 5, # top
                                                       r = 0, # right
                                                       b = 0, # bottom
@@ -2370,7 +2441,9 @@ mv.ALEs <- cowplot::plot_grid(
   
   nrow = 1,
   labels = c("J", "K", "L"),
-  label_fontfamily = "Times New Roman")
+  label_fontfamily = "Times New Roman",
+  label_size = 11.5,
+  label_y = 1.15)
 
 
 mv.ALEs
@@ -2397,7 +2470,7 @@ ggsave(cowplot::plot_grid(ll.ALEs,
        paste(Sys.Date(), "ALE.jpeg", sep = "_"),
        dpi = 750,
        units = "cm",
-       width = 22,
+       width = 23,
        height = 14,
        bg = "white")
        
