@@ -10,9 +10,6 @@ require(DataExplorer)
 
 require(cowplot)
 
-
-
-# Helping functions -------------------------------------------------------
 # Helping functions -------------------------------------------------------
 day.to.yearORmonth <- function(x, unit = c("year", "month")){
   
